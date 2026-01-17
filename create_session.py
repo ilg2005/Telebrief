@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """
-Create Telegram session for Docker deployment.
-
-This script creates a Telegram session file that can be used in Docker
-without requiring interactive authentication.
-
-Run this ONCE locally before deploying to Docker:
-    python create_session.py
-
-The script will:
-1. Prompt for your phone number
-2. Send you a verification code
-3. Create sessions/user.session file
-4. This file can then be used in Docker without interactive prompts
+Create Telegram session using QR code or Phone number.
 """
-
 
 import asyncio
 import os
 import sys
 from pathlib import Path
 
+import qrcode
 from dotenv import load_dotenv
 from telethon import TelegramClient
 
@@ -28,7 +16,7 @@ from telethon import TelegramClient
 async def create_session():
     """Create Telegram session interactively."""
     print("=" * 70)
-    print("Telegram Session Creator for Docker Deployment")
+    print("Telegram Session Creator")
     print("=" * 70)
     print()
 
@@ -60,16 +48,43 @@ async def create_session():
 
     try:
         print("Connecting to Telegram...")
-        print()
-        print("You will be prompted for:")
-        print("  1. Your phone number (international format: +1234567890)")
-        print("  2. Verification code (sent to your Telegram app)")
-        print("  3. 2FA password (if enabled)")
-        print()
-        print("-" * 70)
+        await client.connect()
 
-        # Start client - this will prompt for authentication interactively
-        await client.start()
+        if not await client.is_user_authorized():
+            print()
+            print("Select authentication method:")
+            print("1. QR Code (Recommended - requires mobile app)")
+            print("2. Phone Number (requires SMS/Code)")
+            
+            choice = input("\nEnter choice (1 or 2): ").strip()
+
+            if choice == "1":
+                print("\nGenerating QR Code...")
+                qr = await client.qr_login()
+                
+                # Show QR code
+                print("\n" + "=" * 50)
+                print("SCAN THIS QR CODE WITH YOUR TELEGRAM APP")
+                print("Settings -> Devices -> Link Desktop Device")
+                print("=" * 50 + "\n")
+                
+                # Display QR code in terminal
+                qr_url = qr.url
+                qr_console = qrcode.QRCode()
+                qr_console.add_data(qr_url)
+                qr_console.print_ascii(invert=True)
+                
+                print("\nWaiting for login...")
+                # Wait for login
+                await qr.wait()
+                
+            else:
+                print("\nYou will be prompted for:")
+                print("  1. Your phone number (international format: +1234567890)")
+                print("  2. Verification code")
+                print()
+                phone = input("Please enter your phone (or bot token): ")
+                await client.start(phone=phone)
 
         print("-" * 70)
         print()
@@ -77,13 +92,6 @@ async def create_session():
         print()
         print(f"Session file: {sessions_dir / 'user.session'}")
         print()
-        print("Next steps:")
-        print("  1. Keep this session file safe (it's your authentication)")
-        print("  2. Add 'sessions/' to .gitignore (already done)")
-        print("  3. Run docker-compose up to use the session in Docker")
-        print()
-        print("The session file will be mounted into Docker automatically.")
-        print("=" * 70)
 
         # Test the connection
         me = await client.get_me()

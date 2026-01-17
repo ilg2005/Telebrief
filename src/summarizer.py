@@ -76,7 +76,10 @@ class Summarizer:
         """
         self.config = config
         self.logger = logger
-        self.client = AsyncOpenAI(api_key=config.openai_api_key)
+        self.client = AsyncOpenAI(
+            api_key=config.openai_api_key,
+            base_url=config.openai_base_url,
+        )
         self.model = config.settings.openai_model
         self.temperature = config.settings.openai_temperature
         self.max_tokens = config.settings.max_tokens_per_summary

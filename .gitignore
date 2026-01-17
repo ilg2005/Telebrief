@@ -215,3 +215,6 @@ config.yaml
 
 # Message ID storage
 data/
+
+# IDEA folders
+.trae

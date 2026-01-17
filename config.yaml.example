@@ -22,7 +22,8 @@ settings:
   lookback_hours: 24       # Message collection window
 
   # OpenAI
-  openai_model: "gpt-5-nano"  # Ultra-low cost AI summarization
+  # Note: openai_model can be overridden by OPENAI_MODEL environment variable
+  openai_model: "gpt-5-nano"  # Default model if not set in .env
   openai_temperature: 1.0  # GPT-5-nano only supports default temperature (1.0)
   max_tokens_per_summary: 500
 

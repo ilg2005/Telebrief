@@ -49,6 +49,7 @@ class Config:
     telegram_api_hash: str
     telegram_bot_token: str
     openai_api_key: str
+    openai_base_url: str
     log_level: str
 
 
@@ -112,6 +113,12 @@ def load_config(config_path: str = "config.yaml") -> Config:
     telegram_api_hash = os.getenv("TELEGRAM_API_HASH")
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     openai_api_key = os.getenv("OPENAI_API_KEY")
+    openai_base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    openai_model_env = os.getenv("OPENAI_MODEL")
+
+    if openai_model_env:
+        settings.openai_model = openai_model_env
+
     log_level = os.getenv("LOG_LEVEL", "INFO")
 
     # Validate required environment variables
@@ -145,6 +152,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
         telegram_api_hash=telegram_api_hash,
         telegram_bot_token=telegram_bot_token,
         openai_api_key=openai_api_key,
+        openai_base_url=openai_base_url,
         log_level=log_level,
     )
 
