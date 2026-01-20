@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.config_loader import Config
 from src.core import generate_and_send_channel_digests, generate_history_digest
@@ -54,6 +54,9 @@ class BotCommandHandler:
 
         # Add callback query handler
         self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
+
+        # Add message handler for forwarded messages (ID checker)
+        self.app.add_handler(MessageHandler(filters.FORWARDED, self.handle_id_check))
 
         self.logger.info("Bot command handlers registered")
         return self.app
@@ -320,7 +323,7 @@ class BotCommandHandler:
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Handle /status command.
-
+        
         Args:
             update: Telegram update
             context: Bot context
@@ -359,10 +362,80 @@ class BotCommandHandler:
                 "/cleanup - Удалить предыдущие дайджесты",
                 "/status - Показать этот статус",
                 "/help - Помощь",
+                "",
+                "💡 **Совет:** Перешлите мне сообщение из канала, чтобы узнать его ID.",
             ]
         )
 
         await update.message.reply_text("\n".join(status_lines), parse_mode="Markdown")
+
+    async def handle_id_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Handle forwarded messages to display source ID.
+        """
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        
+        # Security check (optional, but good practice to keep bot private)
+        if not self.is_authorized(user_id):
+            return
+
+        msg = update.message
+        
+        # Support for python-telegram-bot v20+ (forward_origin)
+        if hasattr(msg, 'forward_origin') and msg.forward_origin:
+            origin = msg.forward_origin
+            
+            if origin.type in ['channel', 'chat']:
+                chat = origin.chat
+                chat_title = chat.title
+                chat_id = chat.id
+                username = chat.username
+                
+                response = (
+                    f"🆔 **Информация о канале/чате**\n\n"
+                    f"📝 Название: {chat_title}\n"
+                    f"🔢 ID: `{chat_id}`\n"
+                )
+                if username:
+                    response += f"🔗 Username: @{username}\n"
+                
+                response += "\nСкопируйте ID и вставьте в config.yaml"
+                
+                await msg.reply_text(response, parse_mode="Markdown")
+                return
+
+            elif origin.type == 'user':
+                user = origin.sender_user
+                user_title = user.first_name
+                if user.last_name:
+                    user_title += f" {user.last_name}"
+                user_id_src = user.id
+                username = user.username
+                
+                response = (
+                    f"👤 **Информация о пользователе**\n\n"
+                    f"📝 Имя: {user_title}\n"
+                    f"🔢 ID: `{user_id_src}`\n"
+                )
+                if username:
+                    response += f"🔗 Username: @{username}\n"
+                    
+                await msg.reply_text(response, parse_mode="Markdown")
+                return
+            
+            elif origin.type == 'hidden_user':
+                 await msg.reply_text(
+                     f"👤 **Скрытый пользователь**\n"
+                     f"Имя: {origin.sender_user_name}\n"
+                     "ID скрыт настройками приватности."
+                 , parse_mode="Markdown")
+                 return
+
+        # Fallback (if forward_origin is somehow missing but it was a forward)
+        await msg.reply_text("❌ Не удалось определить источник (возможно, скрыт настройками приватности).")
 
     async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -394,6 +467,9 @@ class BotCommandHandler:
 /cleanup - Удалить предыдущие дайджесты вручную
 /status - Показать статус и настройки
 /help - Показать эту справку
+
+**Полезно:**
+Перешлите мне сообщение из любого канала, и я покажу его ID для настройки.
 
 **Автоматический режим:**
 Дайджест генерируется автоматически каждый день в {}
