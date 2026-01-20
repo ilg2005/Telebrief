@@ -68,6 +68,7 @@ class MessageCollector:
         hours: int = 24,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        target_channel_id: Optional[int] = None,
     ) -> Dict[str, List[Message]]:
         """
         Fetch messages from all configured channels.
@@ -76,6 +77,7 @@ class MessageCollector:
             hours: Number of hours to look back
             start_date: Start date for fetching messages
             end_date: End date for fetching messages
+            target_channel_id: ID of specific channel to fetch
 
         Returns:
             Dictionary mapping channel names to lists of messages
@@ -90,11 +92,18 @@ class MessageCollector:
             log_msg = f"Fetching messages from {len(self.config.channels)} channels (last {hours}h)"
             start_date = get_lookback_time(hours)
 
+        if target_channel_id:
+            log_msg += f" [Target ID: {target_channel_id}]"
+
         self.logger.info(log_msg)
 
         all_messages = {}
 
         for channel_config in self.config.channels:
+            # Skip if target_channel_id is set and doesn't match
+            if target_channel_id and channel_config.id != target_channel_id:
+                continue
+
             try:
                 messages = await self._fetch_channel_messages(
                     channel_config, start_date, end_date

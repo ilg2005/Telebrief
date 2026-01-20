@@ -7,8 +7,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from src.config_loader import Config
 from src.core import generate_and_send_channel_digests, generate_history_digest
@@ -51,6 +51,9 @@ class BotCommandHandler:
         self.app.add_handler(CommandHandler("status", self.handle_status))
         self.app.add_handler(CommandHandler("help", self.handle_help))
         self.app.add_handler(CommandHandler("start", self.handle_help))
+
+        # Add callback query handler
+        self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
 
         self.logger.info("Bot command handlers registered")
         return self.app
@@ -139,6 +142,7 @@ class BotCommandHandler:
     async def handle_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Handle /history command.
+        Displays channel selection menu.
 
         Args:
             update: Telegram update
@@ -153,54 +157,99 @@ class BotCommandHandler:
             self.logger.warning(f"Unauthorized /history attempt from user {user_id}")
             return
 
-        self.logger.info(f"History digest requested by user {user_id}")
+        self.logger.info(f"History menu requested by user {user_id}")
 
-        # Parse arguments
+        # Parse arguments to determine period (optional)
         args = context.args
+        period_arg = None
+        if args:
+            period_arg = args[0]  # Take first argument as period (e.g. 7d)
+
+        # Store period in user_data for later use
+        context.user_data["history_period"] = period_arg
+
+        # Create keyboard with channels
+        keyboard = []
+        for channel in self.config.channels:
+            # Callback data: history:CHANNEL_ID
+            keyboard.append(
+                [InlineKeyboardButton(channel.name, callback_data=f"history:{channel.id}")]
+            )
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "📊 Выберите канал для анализа истории:", reply_markup=reply_markup
+        )
+
+    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Handle callback queries from inline keyboards.
+
+        Args:
+            update: Telegram update
+            context: Bot context
+        """
+        query = update.callback_query
+        await query.answer()
+
+        data = query.data
+        if not data or not data.startswith("history:"):
+            return
+
+        # Extract channel ID
+        try:
+            channel_id = int(data.split(":")[1])
+        except (ValueError, IndexError):
+            await query.edit_message_text("❌ Ошибка: неверный ID канала")
+            return
+
+        # Get stored period or default
+        period_arg = context.user_data.get("history_period")
         start_date: Optional[datetime] = None
         end_date: Optional[datetime] = None
         period_display = "За все время"
 
-        if args:
-            arg = args[0]
-            # Try parsing relative time
-            if arg.endswith("d") and arg[:-1].isdigit():
-                days = int(arg[:-1])
+        if period_arg:
+            # Parse period logic (same as before)
+            if period_arg.endswith("d") and period_arg[:-1].isdigit():
+                days = int(period_arg[:-1])
                 start_date = datetime.utcnow() - timedelta(days=days)
                 period_display = f"Последние {days} дн."
-            elif arg.endswith("m") and arg[:-1].isdigit():  # month roughly 30 days
-                months = int(arg[:-1])
+            elif period_arg.endswith("m") and period_arg[:-1].isdigit():
+                months = int(period_arg[:-1])
                 start_date = datetime.utcnow() - timedelta(days=months * 30)
                 period_display = f"Последние {months} мес."
-            elif arg.endswith("y") and arg[:-1].isdigit():
-                years = int(arg[:-1])
+            elif period_arg.endswith("y") and period_arg[:-1].isdigit():
+                years = int(period_arg[:-1])
                 start_date = datetime.utcnow() - timedelta(days=years * 365)
                 period_display = f"Последние {years} г."
-            # Try parsing date range
-            elif "-" in arg:
+            elif "-" in period_arg:
                 try:
-                    parts = arg.split("-")
+                    parts = period_arg.split("-")
                     if len(parts) == 2:
                         start_date = datetime.strptime(parts[0], "%d.%m.%Y")
                         end_date = datetime.strptime(parts[1], "%d.%m.%Y")
-                        # Add 1 day to end_date to include the full day, or set time to 23:59:59
                         end_date = end_date.replace(hour=23, minute=59, second=59)
                         period_display = f"{parts[0]} - {parts[1]}"
                 except ValueError:
-                    await update.message.reply_text(
-                        "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"
-                    )
+                    await query.edit_message_text("❌ Ошибка в формате даты.")
                     return
-            else:
-                await update.message.reply_text(
-                    "❌ Неверный формат. Используйте: 7d, 1m, 1y или ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"
-                )
-                return
 
-        # Send processing message
-        await update.message.reply_text(
-            f"⏳ Анализирую историю ({period_display})...\nЭто может занять время, в зависимости от количества сообщений."
+        # Find channel name for display
+        channel_name = "Unknown"
+        for ch in self.config.channels:
+            if ch.id == channel_id:
+                channel_name = ch.name
+                break
+
+        await query.edit_message_text(
+            f"⏳ Анализирую историю канала **{channel_name}** ({period_display})...\n"
+            "Это может занять время.",
+            parse_mode="Markdown",
         )
+
+        user_id = update.effective_user.id
 
         try:
             success = await generate_history_digest(
@@ -210,20 +259,22 @@ class BotCommandHandler:
                 end_date=end_date,
                 user_id=user_id,
                 period_display=period_display,
+                target_channel_id=channel_id,
             )
 
             if success:
-                await update.message.reply_text(
-                    f"✅ Анализ истории ({period_display}) завершен!"
-                )
+                # We can't edit the message to show the digest because it's a new message
+                # Just send a confirmation or do nothing (digest is sent separately)
+                pass
             else:
-                await update.message.reply_text(
-                    "❌ Ошибка при генерации анализа истории. Проверьте логи."
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="❌ Ошибка при генерации анализа истории. Проверьте логи.",
                 )
 
         except Exception as e:
-            self.logger.error(f"Error in /history command: {e}", exc_info=True)
-            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+            self.logger.error(f"Error in history generation: {e}", exc_info=True)
+            await context.bot.send_message(chat_id=user_id, text=f"❌ Ошибка: {str(e)}")
 
     async def handle_cleanup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """

@@ -4,7 +4,7 @@ AI-powered summarizer using OpenAI API with Russian output.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
@@ -243,7 +243,15 @@ class Summarizer:
             first_date_str = start_time.strftime("%d.%m.%Y")
             
             # Channel age calculation
-            now = datetime.utcnow()
+            # Ensure timestamps are timezone-aware (UTC)
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
+
+            now = datetime.now(timezone.utc)
+            
             # If end_time is close to now (e.g. within 24h), use now for age calculation
             # Otherwise use end_time (maybe channel is abandoned?)
             # Usually for "age" we want time since creation until now.

@@ -235,6 +235,7 @@ async def generate_history_digest(
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
     period_display: str = "История канала",
+    target_channel_id: Optional[int] = None,
 ) -> bool:
     """
     Generate digest for a specific history period.
@@ -246,6 +247,7 @@ async def generate_history_digest(
         end_date: End date
         user_id: Target user ID
         period_display: Text description of the period
+        target_channel_id: ID of specific channel to analyze
 
     Returns:
         True if successful
@@ -253,6 +255,8 @@ async def generate_history_digest(
     start_time = datetime.utcnow()
     logger.info(f"{'=' * 60}")
     logger.info(f"Starting history digest generation: {period_display}")
+    if target_channel_id:
+        logger.info(f"Target Channel ID: {target_channel_id}")
     logger.info(f"{'=' * 60}")
 
     try:
@@ -263,7 +267,10 @@ async def generate_history_digest(
         await collector.connect()
         try:
             messages_by_channel = await collector.fetch_messages(
-                hours=0, start_date=start_date, end_date=end_date
+                hours=0,
+                start_date=start_date,
+                end_date=end_date,
+                target_channel_id=target_channel_id,
             )
         finally:
             await collector.disconnect()
