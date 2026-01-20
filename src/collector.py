@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from telethon import TelegramClient
 from telethon.errors import ChannelPrivateError, FloodWaitError
@@ -63,26 +63,42 @@ class MessageCollector:
         await self.client.disconnect()
         self.logger.info("Disconnected from Telegram")
 
-    async def fetch_messages(self, hours: int = 24) -> Dict[str, List[Message]]:
+    async def fetch_messages(
+        self,
+        hours: int = 24,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, List[Message]]:
         """
         Fetch messages from all configured channels.
 
         Args:
             hours: Number of hours to look back
+            start_date: Start date for fetching messages
+            end_date: End date for fetching messages
 
         Returns:
             Dictionary mapping channel names to lists of messages
         """
-        self.logger.info(
-            f"Fetching messages from {len(self.config.channels)} channels (last {hours}h)"
-        )
+        if start_date:
+            log_msg = f"Fetching messages from {len(self.config.channels)} channels ({start_date} - {end_date or 'now'})"
+        elif hours == 0:
+            # Case for full history fetch
+            start_date = datetime(2000, 1, 1)  # Telegram launched in 2013, so 2000 is safe
+            log_msg = f"Fetching messages from {len(self.config.channels)} channels (FULL HISTORY)"
+        else:
+            log_msg = f"Fetching messages from {len(self.config.channels)} channels (last {hours}h)"
+            start_date = get_lookback_time(hours)
 
-        lookback_time = get_lookback_time(hours)
+        self.logger.info(log_msg)
+
         all_messages = {}
 
         for channel_config in self.config.channels:
             try:
-                messages = await self._fetch_channel_messages(channel_config, lookback_time)
+                messages = await self._fetch_channel_messages(
+                    channel_config, start_date, end_date
+                )
                 all_messages[channel_config.name] = messages
                 self.logger.info(f"✓ {channel_config.name}: {len(messages)} messages")
             except ChannelPrivateError:
@@ -97,7 +113,9 @@ class MessageCollector:
                 await asyncio.sleep(e.seconds)
                 # Retry once
                 try:
-                    messages = await self._fetch_channel_messages(channel_config, lookback_time)
+                    messages = await self._fetch_channel_messages(
+                        channel_config, start_date, end_date
+                    )
                     all_messages[channel_config.name] = messages
                 except Exception as retry_error:
                     self.logger.error(f"Retry failed for {channel_config.name}: {retry_error}")
@@ -123,20 +141,32 @@ class MessageCollector:
         return all_messages
 
     async def _fetch_channel_messages(
-        self, channel_config: ChannelConfig, lookback_time: datetime
+        self,
+        channel_config: ChannelConfig,
+        start_date: datetime,
+        end_date: Optional[datetime] = None,
     ) -> List[Message]:
         """
         Fetch messages from a single channel.
 
         Args:
             channel_config: Channel configuration
-            lookback_time: Earliest message time
+            start_date: Earliest message time
+            end_date: Latest message time (optional)
 
         Returns:
             List of Message objects
         """
         messages = []
+        # If fetching history (start_date provided explicitly and it is old), we might want to increase limit
+        # For now, let's just use a higher limit if it looks like a history request?
+        # Or just respect config. Let's respect config but maybe warn if it's hit.
         max_messages = self.config.settings.max_messages_per_channel
+        
+        # If we are fetching a specific large period, we might need more messages.
+        # But let's stick to config limit for safety for now.
+        
+        offset_date = end_date if end_date else datetime.utcnow()
 
         try:
             # Get channel entity
@@ -144,10 +174,10 @@ class MessageCollector:
 
             # Fetch messages
             async for message in self.client.iter_messages(
-                entity, limit=max_messages, offset_date=datetime.utcnow()
+                entity, limit=max_messages, offset_date=offset_date
             ):
-                # Stop if message is older than lookback time
-                if message.date < lookback_time.replace(tzinfo=message.date.tzinfo):
+                # Stop if message is older than start_date
+                if message.date < start_date.replace(tzinfo=message.date.tzinfo):
                     break
 
                 # Skip messages without text

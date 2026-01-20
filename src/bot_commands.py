@@ -4,13 +4,14 @@ Bot command handlers for instant digest generation.
 
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
 from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.config_loader import Config
-from src.core import generate_and_send_channel_digests
+from src.core import generate_and_send_channel_digests, generate_history_digest
 from src.scheduler import DigestScheduler
 
 
@@ -45,6 +46,7 @@ class BotCommandHandler:
 
         # Add command handlers
         self.app.add_handler(CommandHandler("digest", self.handle_digest))
+        self.app.add_handler(CommandHandler("history", self.handle_history))
         self.app.add_handler(CommandHandler("cleanup", self.handle_cleanup))
         self.app.add_handler(CommandHandler("status", self.handle_status))
         self.app.add_handler(CommandHandler("help", self.handle_help))
@@ -65,6 +67,7 @@ class BotCommandHandler:
         commands = [
             BotCommand("start", "Начать работу сботом"),
             BotCommand("digest", "Сгенерировать дайджест за 24 часа"),
+            BotCommand("history", "Анализ истории канала"),
             BotCommand("cleanup", "Удалить старые дайджесты"),
             BotCommand("status", "Показать статус и настройки"),
             BotCommand("help", "Показать справку"),
@@ -131,6 +134,95 @@ class BotCommandHandler:
 
         except Exception as e:
             self.logger.error(f"Error in /digest command: {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+    async def handle_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Handle /history command.
+
+        Args:
+            update: Telegram update
+            context: Bot context
+        """
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+
+        if not self.is_authorized(user_id):
+            self.logger.warning(f"Unauthorized /history attempt from user {user_id}")
+            return
+
+        self.logger.info(f"History digest requested by user {user_id}")
+
+        # Parse arguments
+        args = context.args
+        start_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None
+        period_display = "За все время"
+
+        if args:
+            arg = args[0]
+            # Try parsing relative time
+            if arg.endswith("d") and arg[:-1].isdigit():
+                days = int(arg[:-1])
+                start_date = datetime.utcnow() - timedelta(days=days)
+                period_display = f"Последние {days} дн."
+            elif arg.endswith("m") and arg[:-1].isdigit():  # month roughly 30 days
+                months = int(arg[:-1])
+                start_date = datetime.utcnow() - timedelta(days=months * 30)
+                period_display = f"Последние {months} мес."
+            elif arg.endswith("y") and arg[:-1].isdigit():
+                years = int(arg[:-1])
+                start_date = datetime.utcnow() - timedelta(days=years * 365)
+                period_display = f"Последние {years} г."
+            # Try parsing date range
+            elif "-" in arg:
+                try:
+                    parts = arg.split("-")
+                    if len(parts) == 2:
+                        start_date = datetime.strptime(parts[0], "%d.%m.%Y")
+                        end_date = datetime.strptime(parts[1], "%d.%m.%Y")
+                        # Add 1 day to end_date to include the full day, or set time to 23:59:59
+                        end_date = end_date.replace(hour=23, minute=59, second=59)
+                        period_display = f"{parts[0]} - {parts[1]}"
+                except ValueError:
+                    await update.message.reply_text(
+                        "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"
+                    )
+                    return
+            else:
+                await update.message.reply_text(
+                    "❌ Неверный формат. Используйте: 7d, 1m, 1y или ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"
+                )
+                return
+
+        # Send processing message
+        await update.message.reply_text(
+            f"⏳ Анализирую историю ({period_display})...\nЭто может занять время, в зависимости от количества сообщений."
+        )
+
+        try:
+            success = await generate_history_digest(
+                config=self.config,
+                logger=self.logger,
+                start_date=start_date,
+                end_date=end_date,
+                user_id=user_id,
+                period_display=period_display,
+            )
+
+            if success:
+                await update.message.reply_text(
+                    f"✅ Анализ истории ({period_display}) завершен!"
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Ошибка при генерации анализа истории. Проверьте логи."
+                )
+
+        except Exception as e:
+            self.logger.error(f"Error in /history command: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
     async def handle_cleanup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,6 +304,7 @@ class BotCommandHandler:
                 "",
                 "**Доступные команды:**",
                 "/digest - Сгенерировать дайджест сейчас",
+                "/history - Анализ истории (все время, 7d, 1m)",
                 "/cleanup - Удалить предыдущие дайджесты",
                 "/status - Показать этот статус",
                 "/help - Помощь",
@@ -246,6 +339,7 @@ class BotCommandHandler:
 **Команды:**
 
 /digest - Сгенерировать дайджест за последние 24 часа
+/history - Анализ истории канала (параметры: 7d, 1m, 1y или даты)
 /cleanup - Удалить предыдущие дайджесты вручную
 /status - Показать статус и настройки
 /help - Показать эту справку
@@ -257,6 +351,7 @@ class BotCommandHandler:
 • Обработка каналов на любых языках
 • Вывод всегда на русском языке
 • Умные суммаризации с помощью GPT-5
+• Анализ истории и трендов канала
 • Ссылки на оригинальные сообщения
 • Автоматическая очистка старых дайджестов (настраивается)
         """.format(

@@ -31,7 +31,7 @@ class DigestFormatter:
         overview: str,
         channel_summaries: Dict[str, str],
         messages_by_channel: Dict[str, List[Message]],
-        hours: int = 24,
+        period_display: str = "последние 24 часа",
     ) -> str:
         """
         Create formatted digest.
@@ -40,10 +40,7 @@ class DigestFormatter:
             overview: Executive summary
             channel_summaries: Per-channel summaries
             messages_by_channel: Original messages (for links)
-            hours: Time range covered
-
-        Returns:
-            Formatted Markdown digest
+            period_display: Text description of the period
         """
         self.logger.info("Formatting digest")
         self.logger.debug(
@@ -55,7 +52,7 @@ class DigestFormatter:
         parts = []
 
         # Header
-        header = self._create_header(hours)
+        header = self._create_header(period_display)
         parts.append(header)
 
         # Overview section
@@ -84,7 +81,7 @@ class DigestFormatter:
 
         # Statistics footer
         if self.include_stats:
-            stats = self._create_statistics(messages_by_channel, hours)
+            stats = self._create_statistics(messages_by_channel, period_display)
             parts.append(stats)
 
         digest = "\n".join(parts)
@@ -92,15 +89,12 @@ class DigestFormatter:
         self.logger.info(f"Digest formatted: {len(digest)} characters")
         return digest
 
-    def _create_header(self, hours: int) -> str:
+    def _create_header(self, period_display: str) -> str:
         """
         Create digest header.
 
         Args:
-            hours: Time range
-
-        Returns:
-            Header string
+            period_display: Period description
         """
         date_str = datetime.utcnow().strftime("%d %B %Y")
         # Translate month to Russian
@@ -123,7 +117,7 @@ class DigestFormatter:
 
         emoji = "📊" if self.use_emojis else ""
 
-        return f"# {emoji} Ежедневный дайджест - {date_str}\n"
+        return f"# {emoji} Дайджест ({period_display}) - {date_str}\n"
 
     def _create_channel_section(
         self, channel_name: str, summary: str, messages: List[Message]
@@ -190,7 +184,11 @@ class DigestFormatter:
             return "📺"
 
     def format_channel_message(
-        self, channel_name: str, summary: str, messages: List[Message], hours: int = 24
+        self,
+        channel_name: str,
+        summary: str,
+        messages: List[Message],
+        period_display: str = "последние 24 часа",
     ) -> str:
         """
         Format a single channel's summary as a standalone Telegram message.
@@ -199,7 +197,7 @@ class DigestFormatter:
             channel_name: Name of the channel
             summary: AI-generated summary
             messages: Original messages from the channel
-            hours: Time range covered
+            period_display: Text description of the period
 
         Returns:
             Formatted message ready to send
@@ -238,8 +236,7 @@ class DigestFormatter:
         if self.include_stats:
             message_count = len(messages)
             parts.append(f"\n---\n📊 Обработано сообщений: {message_count}")
-            if hours == 24:
-                parts.append(f"⏱️ За последние {hours} часов")
+            parts.append(f"⏱️ Период: {period_display}")
 
         message = "\n".join(parts)
 
@@ -255,7 +252,10 @@ class DigestFormatter:
         return message
 
     def format_summary_message(
-        self, total_channels: int, total_messages: int, hours: int = 24
+        self,
+        total_channels: int,
+        total_messages: int,
+        period_display: str = "последние 24 часа",
     ) -> str:
         """
         Format a summary message to send after all channel messages.
@@ -263,7 +263,7 @@ class DigestFormatter:
         Args:
             total_channels: Number of channels processed
             total_messages: Total messages processed
-            hours: Time range covered
+            period_display: Text description of the period
 
         Returns:
             Summary message
@@ -286,24 +286,23 @@ class DigestFormatter:
         for eng, rus in months_ru.items():
             date_str = date_str.replace(eng, rus)
 
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(hours=hours)
-
         message = f"""📊 **Дайджест завершён** - {date_str}
 
 ✅ Обработано каналов: {total_channels}
 📨 Всего сообщений: {total_messages}
-⏱️ Период: {start_time.strftime('%d.%m %H:%M')} - {end_time.strftime('%d.%m %H:%M')} UTC
+⏱️ Период: {period_display}
 """
         return message
 
-    def _create_statistics(self, messages_by_channel: Dict[str, List[Message]], hours: int) -> str:
+    def _create_statistics(
+        self, messages_by_channel: Dict[str, List[Message]], period_display: str
+    ) -> str:
         """
         Create statistics footer.
 
         Args:
             messages_by_channel: Messages grouped by channel
-            hours: Time range
+            period_display: Period description
 
         Returns:
             Statistics string
@@ -311,22 +310,11 @@ class DigestFormatter:
         total_messages = sum(len(msgs) for msgs in messages_by_channel.values())
         active_channels = sum(1 for msgs in messages_by_channel.values() if msgs)
 
-        # Time range
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(hours=hours)
-
         stats_parts = [
             "---\n",
             f"📈 **Статистика**: {active_channels} каналов, {total_messages} сообщений обработано",
+            f"⏱️ Период: {period_display}",
         ]
-
-        if hours == 24:
-            stats_parts.append(
-                f"⏱️ Дайджест за: {start_time.strftime('%d.%m %H:%M')} - "
-                f"{end_time.strftime('%d.%m %H:%M')} UTC"
-            )
-        else:
-            stats_parts.append(f"⏱️ Период: последние {hours} часов")
 
         return "\n".join(stats_parts)
 

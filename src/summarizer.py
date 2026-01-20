@@ -4,7 +4,8 @@ AI-powered summarizer using OpenAI API with Russian output.
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
@@ -62,6 +63,35 @@ SYSTEM_PROMPT = """
 Если вход включает несколько материалов, сгруппируй по темам с подзаголовками и разделителями; связывай события, указывая причинно-следственные связи.
 """
 
+HISTORY_SYSTEM_PROMPT = """
+Ты — аналитик контента Telegram-каналов.
+Твоя задача — проанализировать историю публикаций канала и составить отчет.
+
+Отчет должен содержать ответы на следующие вопросы:
+1. Основные темы канала (на основе предоставленных сообщений).
+2. Какие темы освещаются чаще всего?
+3. Статистика (количество сообщений, периодичность, возраст канала - данные будут предоставлены, тебе нужно их красиво оформить).
+
+Формат ответа:
+📊 **Анализ контента**
+
+**Основные темы:**
+- [Тема 1]
+- [Тема 2]
+
+**Частые темы:**
+- [Тема А] (очень часто)
+- [Тема Б] (регулярно)
+
+**Статистика:**
+- 📅 Первая публикация: [дата]
+- ⏳ Возраст канала: [возраст]
+- 📨 Всего сообщений: [число]
+- ⏱️ Средняя периодичность: [периодичность]
+
+Отвечай на русском языке. Будь краток и информативен.
+"""
+
 
 class Summarizer:
     """Generates AI-powered summaries in Russian using OpenAI."""
@@ -84,12 +114,15 @@ class Summarizer:
         self.temperature = config.settings.openai_temperature
         self.max_tokens = config.settings.max_tokens_per_summary
 
-    async def summarize_all(self, messages_by_channel: Dict[str, List[Message]]) -> Dict[str, Any]:
+    async def summarize_all(
+        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False
+    ) -> Dict[str, Any]:
         """
         Generate complete digest with per-channel summaries.
 
         Args:
             messages_by_channel: Messages grouped by channel
+            use_history_prompt: Whether to use history analysis prompt
 
         Returns:
             Dictionary with 'channel_summaries' and 'overview' (empty string)
@@ -105,18 +138,21 @@ class Summarizer:
 
         # Generate per-channel summaries
         self.logger.info(f"Generating summaries for {len(non_empty_channels)} channels")
-        channel_summaries = await self._summarize_per_channel(non_empty_channels)
+        channel_summaries = await self._summarize_per_channel(
+            non_empty_channels, use_history_prompt
+        )
 
         return {"channel_summaries": channel_summaries, "overview": ""}
 
     async def _summarize_per_channel(
-        self, messages_by_channel: Dict[str, List[Message]]
+        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False
     ) -> Dict[str, str]:
         """
         Generate summary for each channel.
 
         Args:
             messages_by_channel: Messages grouped by channel
+            use_history_prompt: Whether to use history analysis prompt
 
         Returns:
             Dictionary mapping channel names to summaries
@@ -125,7 +161,7 @@ class Summarizer:
 
         for channel_name, messages in messages_by_channel.items():
             try:
-                summary = await self._summarize_channel(channel_name, messages)
+                summary = await self._summarize_channel(channel_name, messages, use_history_prompt)
                 summaries[channel_name] = summary
                 self.logger.info(f"✓ Summarized {channel_name}")
             except Exception as e:
@@ -134,17 +170,24 @@ class Summarizer:
 
         return summaries
 
-    async def _summarize_channel(self, channel_name: str, messages: List[Message]) -> str:
+    async def _summarize_channel(
+        self, channel_name: str, messages: List[Message], use_history_prompt: bool = False
+    ) -> str:
         """
         Generate summary for a single channel.
 
         Args:
             channel_name: Name of the channel
             messages: List of messages
+            use_history_prompt: Whether to use history analysis prompt
 
         Returns:
             Summary in Russian
         """
+        if use_history_prompt:
+            return await self._summarize_channel_history(channel_name, messages)
+        
+        # Standard daily digest logic
         # Format messages for prompt
         messages_text = self._format_messages_for_prompt(messages)
 
@@ -178,28 +221,139 @@ class Summarizer:
 Ответь ТОЛЬКО на русском языке. Помни: максимум 3500 символов!
 """
 
+        return await self._call_openai(prompt, SYSTEM_PROMPT)
+
+    async def _summarize_channel_history(self, channel_name: str, messages: List[Message]) -> str:
+        """
+        Generate history analysis for a channel, potentially using batching.
+        """
+        # Calculate statistics
+        total_msgs = len(messages)
+        avg_freq_str = "Неизвестно"
+        first_date_str = "Неизвестно"
+        channel_age_str = "Неизвестно"
+        
+        if total_msgs > 0:
+            # Sort messages by timestamp just in case
+            sorted_msgs = sorted(messages, key=lambda m: m.timestamp)
+            start_time = sorted_msgs[0].timestamp
+            end_time = sorted_msgs[-1].timestamp
+            
+            # First publication date
+            first_date_str = start_time.strftime("%d.%m.%Y")
+            
+            # Channel age calculation
+            now = datetime.utcnow()
+            # If end_time is close to now (e.g. within 24h), use now for age calculation
+            # Otherwise use end_time (maybe channel is abandoned?)
+            # Usually for "age" we want time since creation until now.
+            age_duration = now - start_time
+            
+            years = age_duration.days // 365
+            remaining_days = age_duration.days % 365
+            months = remaining_days // 30
+            
+            age_parts = []
+            if years > 0:
+                age_parts.append(f"{years} г.")
+            if months > 0:
+                age_parts.append(f"{months} мес.")
+            
+            if not age_parts:
+                age_parts.append("менее 1 мес.")
+                
+            channel_age_str = " ".join(age_parts)
+            
+            # Frequency calculation
+            duration = end_time - start_time
+            if total_msgs > 1 and duration.total_seconds() > 0:
+                avg_seconds = duration.total_seconds() / (total_msgs - 1)
+                if avg_seconds < 60:
+                    avg_freq_str = f"~{int(avg_seconds)} сек"
+                elif avg_seconds < 3600:
+                    avg_freq_str = f"~{int(avg_seconds/60)} мин"
+                elif avg_seconds < 86400:
+                    avg_freq_str = f"~{int(avg_seconds/3600)} ч"
+                else:
+                    avg_freq_str = f"~{int(avg_seconds/86400)} дн"
+
+        stats_info = (
+            f"Всего сообщений: {total_msgs}\n"
+            f"Первая публикация: {first_date_str}\n"
+            f"Возраст канала: {channel_age_str}\n"
+            f"Средняя периодичность: {avg_freq_str}"
+        )
+
+        # Batching logic
+        BATCH_SIZE = 50
+        
+        if total_msgs <= BATCH_SIZE:
+            messages_text = self._format_messages_for_prompt(messages)
+            content_to_analyze = messages_text
+        else:
+            # Split into batches and summarize each
+            chunks = [messages[i : i + BATCH_SIZE] for i in range(0, total_msgs, BATCH_SIZE)]
+            chunk_summaries = []
+            
+            self.logger.info(f"Splitting {total_msgs} messages into {len(chunks)} chunks for {channel_name}")
+            
+            for i, chunk in enumerate(chunks, 1):
+                chunk_text = self._format_messages_for_prompt(chunk)
+                chunk_prompt = f"""
+Проанализируй эти сообщения (часть {i}/{len(chunks)}) из канала "{channel_name}".
+Выдели основные темы и ключевые события. Не нужно форматировать, просто перечисли факты.
+Сообщения:
+---
+{chunk_text}
+---
+"""
+                try:
+                    # Use a simpler system prompt for chunks
+                    chunk_summary = await self._call_openai(chunk_prompt, "Ты — аналитик данных. Выдели главное.")
+                    chunk_summaries.append(chunk_summary)
+                    self.logger.debug(f"Summarized chunk {i}/{len(chunks)}")
+                except Exception as e:
+                    self.logger.error(f"Error summarizing chunk {i}: {e}")
+            
+            content_to_analyze = "\n\n".join(chunk_summaries)
+
+        # Final Prompt
+        prompt = f"""
+Проанализируй предоставленный контент Telegram-канала "{channel_name}".
+
+Статистика (уже рассчитана, включи её в ответ):
+{stats_info}
+
+Контент для анализа (сообщения или резюме частей):
+---
+{content_to_analyze}
+---
+
+Твоя задача — ответить на вопросы:
+1. Основные темы канала.
+2. Какие темы освещаются чаще всего.
+3. Оформить статистику.
+
+Используй формат из системного промпта.
+"""
+        return await self._call_openai(prompt, HISTORY_SYSTEM_PROMPT)
+
+    async def _call_openai(self, prompt: str, system_prompt: str) -> str:
+        """Helper to call OpenAI API."""
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             )
 
-            self.logger.debug(f"API response for {channel_name}: {response}")
-            self.logger.debug(f"Response choices: {response.choices}")
-
             content = response.choices[0].message.content
-            self.logger.debug(f"Raw content for {channel_name}: {repr(content)}")
-            self.logger.debug(f"Content type: {type(content)}, is None: {content is None}")
-
-            summary = content.strip() if content else ""
-            self.logger.debug(f"Final summary for {channel_name}: {len(summary)} chars")
-            return summary
+            return content.strip() if content else ""
 
         except Exception as e:
-            self.logger.error(f"OpenAI API error for {channel_name}: {e}")
+            self.logger.error(f"OpenAI API error: {e}")
             raise
 
     def _format_messages_for_prompt(self, messages: List[Message]) -> str:
