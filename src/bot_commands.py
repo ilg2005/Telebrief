@@ -188,7 +188,7 @@ class BotCommandHandler:
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Handle callback queries from inline keyboards.
-
+        
         Args:
             update: Telegram update
             context: Bot context
@@ -197,7 +197,56 @@ class BotCommandHandler:
         await query.answer()
 
         data = query.data
-        if not data or not data.startswith("history:"):
+        if not data:
+            return
+
+        # Handle Add Channel actions
+        if data.startswith("add_channel:"):
+            action = data.split(":")[1]
+            
+            if action == "cancel":
+                await query.edit_message_reply_markup(reply_markup=None)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Добавление канала отменено."
+                )
+                if "pending_channel" in context.user_data:
+                    del context.user_data["pending_channel"]
+                return
+            
+            elif action == "confirm":
+                if "pending_channel" not in context.user_data:
+                    await query.edit_message_text("⚠️ Ошибка: данные устарели. Перешлите сообщение снова.")
+                    return
+                
+                channel_info = context.user_data["pending_channel"]
+                channel_id = channel_info["id"]
+                channel_name = channel_info["name"]
+                
+                # Add to config file
+                from src.config_loader import add_channel_to_config_file, ChannelConfig
+                
+                success = add_channel_to_config_file("config.yaml", channel_id, channel_name)
+                
+                if success:
+                    # Update runtime config
+                    self.config.channels.append(ChannelConfig(id=channel_id, name=channel_name))
+                    
+                    await query.edit_message_reply_markup(reply_markup=None)
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"✅ Канал **\"{channel_name}\"** успешно добавлен в настройки!\n"
+                             f"Он появится в дайджестах со следующего запуска.",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await query.edit_message_text("❌ Ошибка при записи в файл конфигурации.")
+                
+                # Cleanup
+                del context.user_data["pending_channel"]
+                return
+
+        if not data.startswith("history:"):
             return
 
         # Extract channel ID
@@ -394,6 +443,13 @@ class BotCommandHandler:
                 chat_id = chat.id
                 username = chat.username
                 
+                # Check if already configured
+                is_configured = False
+                for ch in self.config.channels:
+                    if ch.id == str(chat_id) or ch.id == chat_id:
+                        is_configured = True
+                        break
+                
                 response = (
                     f"🆔 **Информация о канале/чате**\n\n"
                     f"📝 Название: {chat_title}\n"
@@ -402,9 +458,28 @@ class BotCommandHandler:
                 if username:
                     response += f"🔗 Username: @{username}\n"
                 
-                response += "\nСкопируйте ID и вставьте в config.yaml"
+                if is_configured:
+                    response += "\n✅ **Этот канал уже добавлен в настройки.**"
+                    await msg.reply_text(response, parse_mode="Markdown")
+                else:
+                    response += "\n❓ **Добавить этот канал в список для дайджестов?**"
+                    
+                    # Store pending channel info
+                    context.user_data["pending_channel"] = {
+                        "id": chat_id,
+                        "name": chat_title
+                    }
+                    
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ Добавить", callback_data="add_channel:confirm"),
+                            InlineKeyboardButton("❌ Отмена", callback_data="add_channel:cancel")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await msg.reply_text(response, reply_markup=reply_markup, parse_mode="Markdown")
                 
-                await msg.reply_text(response, parse_mode="Markdown")
                 return
 
             elif origin.type == 'user':

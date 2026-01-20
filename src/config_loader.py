@@ -159,6 +159,64 @@ def load_config(config_path: str = "config.yaml") -> Config:
     return config
 
 
+def add_channel_to_config_file(config_path: str, channel_id: int, channel_name: str) -> bool:
+    """
+    Add a channel to the config.yaml file preserving comments.
+    
+    Args:
+        config_path: Path to config.yaml
+        channel_id: Channel ID
+        channel_name: Channel name
+        
+    Returns:
+        True if successful
+    """
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        # Find "channels:" section
+        channels_idx = -1
+        for i, line in enumerate(lines):
+            if line.strip().startswith("channels:"):
+                channels_idx = i
+                break
+                
+        if channels_idx == -1:
+            return False
+            
+        # Find insertion point (end of channels list)
+        # We look for the start of the next section (no indentation)
+        # or end of file
+        insert_idx = len(lines)
+        
+        for i in range(channels_idx + 1, len(lines)):
+            line = lines[i]
+            # Check for non-empty, non-comment line with 0 indentation
+            if line.strip() and not line.strip().startswith("#") and not line.startswith(" "):
+                insert_idx = i
+                break
+                
+        # Prepare new entry lines
+        new_entry = [
+            f"  - id: {channel_id}\n",
+            f"    name: \"{channel_name}\"\n"
+        ]
+        
+        # Insert
+        lines[insert_idx:insert_idx] = new_entry
+        
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error updating config: {e}")
+        return False
+
+
+
 if __name__ == "__main__":
     # Test configuration loading
     try:
