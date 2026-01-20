@@ -4,6 +4,7 @@ Bot command handlers for instant digest generation.
 
 import asyncio
 import logging
+import html
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -522,7 +523,7 @@ class BotCommandHandler:
             
             if origin.type in ['channel', 'chat']:
                 chat = origin.chat
-                chat_title = chat.title
+                chat_title = html.escape(chat.title)
                 chat_id = chat.id
                 username = chat.username
                 
@@ -534,23 +535,23 @@ class BotCommandHandler:
                         break
                 
                 response = (
-                    f"🆔 **Информация о канале/чате**\n\n"
+                    f"🆔 <b>Информация о канале/чате</b>\n\n"
                     f"📝 Название: {chat_title}\n"
-                    f"🔢 ID: `{chat_id}`\n"
+                    f"🔢 ID: <code>{chat_id}</code>\n"
                 )
                 if username:
                     response += f"🔗 Username: @{username}\n"
                 
                 if is_configured:
-                    response += "\n✅ **Этот канал уже добавлен в настройки.**"
-                    await msg.reply_text(response, parse_mode="Markdown")
+                    response += "\n✅ <b>Этот канал уже добавлен в настройки.</b>"
+                    await msg.reply_text(response, parse_mode="HTML")
                 else:
-                    response += "\n❓ **Добавить этот канал в список для дайджестов?**"
+                    response += "\n❓ <b>Добавить этот канал в список для дайджестов?</b>"
                     
-                    # Store pending channel info
+                    # Store pending channel info (unescaped title for config)
                     context.user_data["pending_channel"] = {
                         "id": chat_id,
-                        "name": chat_title
+                        "name": chat.title
                     }
                     
                     keyboard = [
@@ -561,7 +562,7 @@ class BotCommandHandler:
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    await msg.reply_text(response, reply_markup=reply_markup, parse_mode="Markdown")
+                    await msg.reply_text(response, reply_markup=reply_markup, parse_mode="HTML")
                 
                 return
 
@@ -570,26 +571,29 @@ class BotCommandHandler:
                 user_title = user.first_name
                 if user.last_name:
                     user_title += f" {user.last_name}"
+                
+                user_title = html.escape(user_title)
                 user_id_src = user.id
                 username = user.username
                 
                 response = (
-                    f"👤 **Информация о пользователе**\n\n"
+                    f"👤 <b>Информация о пользователе</b>\n\n"
                     f"📝 Имя: {user_title}\n"
-                    f"🔢 ID: `{user_id_src}`\n"
+                    f"🔢 ID: <code>{user_id_src}</code>\n"
                 )
                 if username:
                     response += f"🔗 Username: @{username}\n"
                     
-                await msg.reply_text(response, parse_mode="Markdown")
+                await msg.reply_text(response, parse_mode="HTML")
                 return
             
             elif origin.type == 'hidden_user':
+                 sender_name = html.escape(origin.sender_user_name) if origin.sender_user_name else "Unknown"
                  await msg.reply_text(
-                     f"👤 **Скрытый пользователь**\n"
-                     f"Имя: {origin.sender_user_name}\n"
+                     f"👤 <b>Скрытый пользователь</b>\n"
+                     f"Имя: {sender_name}\n"
                      "ID скрыт настройками приватности."
-                 , parse_mode="Markdown")
+                 , parse_mode="HTML")
                  return
 
         # Fallback (if forward_origin is somehow missing but it was a forward)
