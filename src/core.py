@@ -284,11 +284,19 @@ async def generate_history_digest(
             logger.warning("No messages collected, skipping digest generation")
             return False
 
+        is_full_history = False
+        if start_date is None and end_date is None and period_display != "последние 24 часа": # rough check, better logic below
+             # If hours=0 and dates are default/None, it's full history.
+             # Actually, the caller sets dates to 2000-01-01 for full history.
+             # Let's check if start_date is the "full history" date (year 2000)
+             if start_date and start_date.year == 2000:
+                 is_full_history = True
+
         # Step 2: Generate summaries (using history prompt)
-        logger.info("STEP 2: Generating AI summaries (History Mode)")
+        logger.info(f"STEP 2: Generating AI summaries (History Mode, Full={is_full_history})")
         summarizer = Summarizer(config, logger)
         summary_result = await summarizer.summarize_all(
-            messages_by_channel, use_history_prompt=True
+            messages_by_channel, use_history_prompt=True, is_full_history=is_full_history
         )
 
         channel_summaries = summary_result["channel_summaries"]

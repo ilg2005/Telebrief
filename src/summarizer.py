@@ -115,7 +115,7 @@ class Summarizer:
         self.max_tokens = config.settings.max_tokens_per_summary
 
     async def summarize_all(
-        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False
+        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False, is_full_history: bool = False
     ) -> Dict[str, Any]:
         """
         Generate complete digest with per-channel summaries.
@@ -123,6 +123,7 @@ class Summarizer:
         Args:
             messages_by_channel: Messages grouped by channel
             use_history_prompt: Whether to use history analysis prompt
+            is_full_history: Whether this is a full history analysis (all time)
 
         Returns:
             Dictionary with 'channel_summaries' and 'overview' (empty string)
@@ -139,13 +140,13 @@ class Summarizer:
         # Generate per-channel summaries
         self.logger.info(f"Generating summaries for {len(non_empty_channels)} channels")
         channel_summaries = await self._summarize_per_channel(
-            non_empty_channels, use_history_prompt
+            non_empty_channels, use_history_prompt, is_full_history
         )
 
         return {"channel_summaries": channel_summaries, "overview": ""}
 
     async def _summarize_per_channel(
-        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False
+        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False, is_full_history: bool = False
     ) -> Dict[str, str]:
         """
         Generate summary for each channel.
@@ -153,6 +154,7 @@ class Summarizer:
         Args:
             messages_by_channel: Messages grouped by channel
             use_history_prompt: Whether to use history analysis prompt
+            is_full_history: Whether this is a full history analysis
 
         Returns:
             Dictionary mapping channel names to summaries
@@ -161,7 +163,7 @@ class Summarizer:
 
         for channel_name, messages in messages_by_channel.items():
             try:
-                summary = await self._summarize_channel(channel_name, messages, use_history_prompt)
+                summary = await self._summarize_channel(channel_name, messages, use_history_prompt, is_full_history)
                 summaries[channel_name] = summary
                 self.logger.info(f"✓ Summarized {channel_name}")
             except Exception as e:
@@ -171,7 +173,7 @@ class Summarizer:
         return summaries
 
     async def _summarize_channel(
-        self, channel_name: str, messages: List[Message], use_history_prompt: bool = False
+        self, channel_name: str, messages: List[Message], use_history_prompt: bool = False, is_full_history: bool = False
     ) -> str:
         """
         Generate summary for a single channel.
@@ -180,12 +182,13 @@ class Summarizer:
             channel_name: Name of the channel
             messages: List of messages
             use_history_prompt: Whether to use history analysis prompt
+            is_full_history: Whether this is a full history analysis
 
         Returns:
             Summary in Russian
         """
         if use_history_prompt:
-            return await self._summarize_channel_history(channel_name, messages)
+            return await self._summarize_channel_history(channel_name, messages, is_full_history)
         
         # Standard daily digest logic
         # Format messages for prompt
@@ -223,15 +226,15 @@ class Summarizer:
 
         return await self._call_openai(prompt, SYSTEM_PROMPT)
 
-    async def _summarize_channel_history(self, channel_name: str, messages: List[Message]) -> str:
+    async def _summarize_channel_history(self, channel_name: str, messages: List[Message], is_full_history: bool = False) -> str:
         """
         Generate history analysis for a channel, potentially using batching.
         """
         # Calculate statistics
         total_msgs = len(messages)
         avg_freq_str = "Неизвестно"
-        first_date_str = "Неизвестно"
-        channel_age_str = "Неизвестно"
+        first_date_str = ""
+        channel_age_str = ""
         
         if total_msgs > 0:
             # Sort messages by timestamp just in case
@@ -239,40 +242,7 @@ class Summarizer:
             start_time = sorted_msgs[0].timestamp
             end_time = sorted_msgs[-1].timestamp
             
-            # First publication date
-            first_date_str = start_time.strftime("%d.%m.%Y")
-            
-            # Channel age calculation
-            # Ensure timestamps are timezone-aware (UTC)
-            if start_time.tzinfo is None:
-                start_time = start_time.replace(tzinfo=timezone.utc)
-            
-            if end_time.tzinfo is None:
-                end_time = end_time.replace(tzinfo=timezone.utc)
-
-            now = datetime.now(timezone.utc)
-            
-            # If end_time is close to now (e.g. within 24h), use now for age calculation
-            # Otherwise use end_time (maybe channel is abandoned?)
-            # Usually for "age" we want time since creation until now.
-            age_duration = now - start_time
-            
-            years = age_duration.days // 365
-            remaining_days = age_duration.days % 365
-            months = remaining_days // 30
-            
-            age_parts = []
-            if years > 0:
-                age_parts.append(f"{years} г.")
-            if months > 0:
-                age_parts.append(f"{months} мес.")
-            
-            if not age_parts:
-                age_parts.append("менее 1 мес.")
-                
-            channel_age_str = " ".join(age_parts)
-            
-            # Frequency calculation
+            # Frequency calculation (always useful)
             duration = end_time - start_time
             if total_msgs > 1 and duration.total_seconds() > 0:
                 avg_seconds = duration.total_seconds() / (total_msgs - 1)
@@ -285,12 +255,49 @@ class Summarizer:
                 else:
                     avg_freq_str = f"~{int(avg_seconds/86400)} дн"
 
-        stats_info = (
-            f"Всего сообщений: {total_msgs}\n"
-            f"Первая публикация: {first_date_str}\n"
-            f"Возраст канала: {channel_age_str}\n"
-            f"Средняя периодичность: {avg_freq_str}"
-        )
+            # Calculate Age and First Date ONLY if full history is requested
+            if is_full_history:
+                # First publication date
+                first_date_str = start_time.strftime("%d.%m.%Y")
+                
+                # Channel age calculation
+                # Ensure timestamps are timezone-aware (UTC)
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                
+                if end_time.tzinfo is None:
+                    end_time = end_time.replace(tzinfo=timezone.utc)
+
+                now = datetime.now(timezone.utc)
+                
+                # If end_time is close to now (e.g. within 24h), use now for age calculation
+                # Otherwise use end_time (maybe channel is abandoned?)
+                # Usually for "age" we want time since creation until now.
+                age_duration = now - start_time
+                
+                years = age_duration.days // 365
+                remaining_days = age_duration.days % 365
+                months = remaining_days // 30
+                
+                age_parts = []
+                if years > 0:
+                    age_parts.append(f"{years} г.")
+                if months > 0:
+                    age_parts.append(f"{months} мес.")
+                
+                if not age_parts:
+                    age_parts.append("менее 1 мес.")
+                    
+                channel_age_str = " ".join(age_parts)
+
+        # Construct stats string based on context
+        stats_info = f"Всего сообщений: {total_msgs}\n"
+        if is_full_history:
+            stats_info += (
+                f"Первая публикация: {first_date_str}\n"
+                f"Возраст канала: {channel_age_str}\n"
+            )
+        stats_info += f"Средняя периодичность: {avg_freq_str}"
 
         # Batching logic
         BATCH_SIZE = 50
