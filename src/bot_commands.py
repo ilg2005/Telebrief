@@ -48,6 +48,7 @@ class BotCommandHandler:
         self.app.add_handler(CommandHandler("digest", self.handle_digest))
         self.app.add_handler(CommandHandler("history", self.handle_history))
         self.app.add_handler(CommandHandler("cleanup", self.handle_cleanup))
+        self.app.add_handler(CommandHandler("remove", self.handle_remove))
         self.app.add_handler(CommandHandler("status", self.handle_status))
         self.app.add_handler(CommandHandler("help", self.handle_help))
         self.app.add_handler(CommandHandler("start", self.handle_help))
@@ -74,6 +75,7 @@ class BotCommandHandler:
             BotCommand("start", "Начать работу сботом"),
             BotCommand("digest", "Сгенерировать дайджест за 24 часа"),
             BotCommand("history", "Анализ истории канала"),
+            BotCommand("remove", "Удалить канал из списка"),
             BotCommand("cleanup", "Удалить старые дайджесты"),
             BotCommand("status", "Показать статус и настройки"),
             BotCommand("help", "Показать справку"),
@@ -246,6 +248,56 @@ class BotCommandHandler:
                 del context.user_data["pending_channel"]
                 return
 
+        # Handle Remove Channel actions
+        if data.startswith("remove_ask:"):
+            try:
+                channel_id = int(data.split(":")[1])
+                channel_name = "Unknown"
+                for ch in self.config.channels:
+                    if str(ch.id) == str(channel_id):
+                        channel_name = ch.name
+                        break
+                
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Да, удалить", callback_data=f"remove_confirm:{channel_id}"),
+                        InlineKeyboardButton("❌ Отмена", callback_data="remove_cancel")
+                    ]
+                ]
+                await query.edit_message_text(
+                    f"⚠️ Вы уверены, что хотите удалить канал **{channel_name}**?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+                return
+            except Exception:
+                await query.edit_message_text("❌ Ошибка обработки запроса.")
+                return
+
+        if data.startswith("remove_confirm:"):
+            try:
+                channel_id = int(data.split(":")[1])
+                
+                # Remove from config file
+                from src.config_loader import remove_channel_from_config_file
+                success = remove_channel_from_config_file("config.yaml", channel_id)
+                
+                if success:
+                    # Remove from runtime config
+                    self.config.channels = [ch for ch in self.config.channels if str(ch.id) != str(channel_id)]
+                    
+                    await query.edit_message_text("✅ Канал успешно удален из настроек.")
+                else:
+                    await query.edit_message_text("❌ Не удалось удалить канал из файла конфигурации.")
+                return
+            except Exception:
+                await query.edit_message_text("❌ Ошибка удаления.")
+                return
+
+        if data == "remove_cancel":
+            await query.edit_message_text("❌ Удаление отменено.")
+            return
+
         if not data.startswith("history:"):
             return
 
@@ -368,6 +420,37 @@ class BotCommandHandler:
         except Exception as e:
             self.logger.error(f"Error in /cleanup command: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+    async def handle_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Handle /remove command.
+        """
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        
+        if not self.is_authorized(user_id):
+            return
+
+        if not self.config.channels:
+            await update.message.reply_text("ℹ️ Список каналов пуст.")
+            return
+
+        keyboard = []
+        for channel in self.config.channels:
+            # remove_ask:CHANNEL_ID
+            btn_text = f"🗑️ {channel.name}"
+            keyboard.append(
+                [InlineKeyboardButton(btn_text, callback_data=f"remove_ask:{channel.id}")]
+            )
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "🗑️ **Удаление канала**\nВыберите канал, который хотите удалить:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """

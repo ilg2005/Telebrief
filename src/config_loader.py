@@ -216,6 +216,77 @@ def add_channel_to_config_file(config_path: str, channel_id: int, channel_name: 
         return False
 
 
+def remove_channel_from_config_file(config_path: str, channel_id: int) -> bool:
+    """
+    Remove a channel from the config.yaml file.
+    
+    Args:
+        config_path: Path to config.yaml
+        channel_id: Channel ID to remove
+        
+    Returns:
+        True if successful
+    """
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        # Find "channels:" section
+        channels_idx = -1
+        for i, line in enumerate(lines):
+            if line.strip().startswith("channels:"):
+                channels_idx = i
+                break
+                
+        if channels_idx == -1:
+            return False
+            
+        # Find the channel entry
+        start_idx = -1
+        end_idx = -1
+        
+        # Look for "- id: CHANNEL_ID"
+        target_str = str(channel_id)
+        
+        for i in range(channels_idx + 1, len(lines)):
+            line = lines[i]
+            stripped = line.strip()
+            
+            # Start of a channel block
+            if stripped.startswith("- id:"):
+                # If we found the start of our target channel
+                if target_str in stripped:
+                    start_idx = i
+                # If we were tracking a channel and found a NEW one, that's the end
+                elif start_idx != -1:
+                    end_idx = i
+                    break
+            
+            # If we hit a new top-level section (no indentation) or end of file
+            elif start_idx != -1 and stripped and not line.startswith(" ") and not line.startswith("#"):
+                end_idx = i
+                break
+
+        # If we found start but not end, it means it goes until EOF
+        if start_idx != -1 and end_idx == -1:
+            end_idx = len(lines)
+            
+        if start_idx == -1:
+            print(f"Channel ID {channel_id} not found in config")
+            return False
+            
+        # Remove lines
+        del lines[start_idx:end_idx]
+        
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+            
+        return True
+        
+    except Exception as e:
+        print(f"Error removing from config: {e}")
+        return False
+
 
 if __name__ == "__main__":
     # Test configuration loading
