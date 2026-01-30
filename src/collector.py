@@ -25,6 +25,7 @@ class Message:
     timestamp: datetime
     link: str
     channel_name: str
+    message_id: int
     has_media: bool
     media_type: str
 
@@ -214,6 +215,7 @@ class MessageCollector:
                         timestamp=message.date,
                         link=link,
                         channel_name=channel_config.name,
+                        message_id=message.id,
                         has_media=message.media is not None,
                         media_type=media_type or "",
                     )

@@ -6,12 +6,17 @@ import asyncio
 import logging
 import html
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Optional
+from collections import OrderedDict
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
+from src.chat_storage import ChatStorage
+from src.chat_answerer import ChatAnswerer
+from src.collector import MessageCollector
 from src.config_loader import Config
 from src.core import generate_and_send_channel_digests, generate_history_digest
 from src.scheduler import DigestScheduler
@@ -36,6 +41,20 @@ class BotCommandHandler:
         self.logger = logger
         self.scheduler = scheduler
         self.app: Optional[Application] = None
+        self.build_id = (
+            os.getenv("TELEBRIEF_BUILD_ID")
+            or os.getenv("TELEBRIEF_VERSION")
+            or os.getenv("IMAGE_TAG")
+            or "dev"
+        )
+        self.chat_storage = ChatStorage()
+        try:
+            self.chat_storage.ensure_schema()
+            self.logger.info(f"Chat storage initialized: {self.chat_storage.debug_info()}")
+            self.logger.info(f"Telebrief build: {self.build_id}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize chat storage: {e}", exc_info=True)
+        self.chat_answerer = ChatAnswerer(config, logger)
 
     def setup_application(self) -> Application:
         """
@@ -50,10 +69,15 @@ class BotCommandHandler:
         # Add command handlers
         self.app.add_handler(CommandHandler("digest", self.handle_digest))
         self.app.add_handler(CommandHandler("history", self.handle_history))
+        self.app.add_handler(CommandHandler("chat", self.handle_chat))
+        self.app.add_handler(CommandHandler("chat_stop", self.handle_chat_stop))
+        self.app.add_handler(CommandHandler("chat_status", self.handle_chat_status))
+        self.app.add_handler(CommandHandler("chat_reset", self.handle_chat_reset))
         self.app.add_handler(CommandHandler("cleanup", self.handle_cleanup))
         self.app.add_handler(CommandHandler("remove", self.handle_remove))
         self.app.add_handler(CommandHandler("autoschedule", self.handle_autoschedule))
         self.app.add_handler(CommandHandler("model", self.handle_model))
+        self.app.add_handler(CommandHandler("version", self.handle_version))
         self.app.add_handler(CommandHandler("status", self.handle_status))
         self.app.add_handler(CommandHandler("help", self.handle_help))
         self.app.add_handler(CommandHandler("start", self.handle_help))
@@ -84,10 +108,15 @@ class BotCommandHandler:
             BotCommand("start", "Начать работу сботом"),
             BotCommand("digest", "Сгенерировать дайджест за 24 часа"),
             BotCommand("history", "Анализ истории канала"),
+            BotCommand("chat", "Чат по истории канала"),
+            BotCommand("chat_stop", "Выйти из режима чата"),
+            BotCommand("chat_status", "Показать текущий чат-контекст"),
+            BotCommand("chat_reset", "Пересобрать чат-контекст"),
             BotCommand("remove", "Удалить канал из списка"),
             BotCommand("cleanup", "Удалить старые дайджесты"),
             BotCommand("autoschedule", "Включить/выключить автодайджест"),
             BotCommand("model", "Установить модель генерации"),
+            BotCommand("version", "Показать версию/сборку"),
             BotCommand("status", "Показать статус и настройки"),
             BotCommand("help", "Показать справку"),
         ]
@@ -184,6 +213,7 @@ class BotCommandHandler:
 
         status_lines = [
             "📊 **Статус Telebrief**\n",
+            f"🧩 Сборка: {self.build_id}",
             model_line,
             f"📺 Каналов настроено: {len(self.config.channels)}",
             f"🧹 Автоочистка: {'Включена' if self.config.settings.auto_cleanup_old_digests else 'Выключена'}",
@@ -312,29 +342,281 @@ class BotCommandHandler:
             reply_markup=self._build_history_channel_keyboard(),
         )
 
+    async def handle_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            self.logger.warning(f"Unauthorized /chat attempt from user {user_id}")
+            return
+
+        args = context.args
+        period_arg = None
+        if args:
+            period_arg = args[0]
+
+        context.user_data["chat_period"] = period_arg
+        context.user_data.pop("awaiting_chat_days", None)
+        context.user_data.pop("chat_session_id", None)
+
+        if not period_arg:
+            await update.message.reply_text(
+                "📅 Выберите период для чата по истории:",
+                reply_markup=self._build_chat_period_keyboard(),
+            )
+            return
+
+        await update.message.reply_text(
+            "💬 Выберите канал для чата по истории:",
+            reply_markup=self._build_chat_channel_keyboard(),
+        )
+
+    async def handle_chat_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        context.user_data.pop("chat_session_id", None)
+        context.user_data.pop("chat_period", None)
+        context.user_data.pop("awaiting_chat_days", None)
+        self.chat_storage.deactivate_active_session(user_id)
+        await update.message.reply_text("✅ Ок, вышел из режима чата. Запустить заново: /chat")
+
+    async def handle_chat_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        session = self.chat_storage.get_active_session(user_id)
+        if not session:
+            await update.message.reply_text("Пока нет активной чат-сессии. Запусти /chat.")
+            return
+
+        count = self.chat_storage.count_corpus_messages(session["id"])
+        start = session.get("start_date") or "—"
+        end = session.get("end_date") or "—"
+        await update.message.reply_text(
+            "Текущий чат-контекст:\n"
+            f"- Канал: {session.get('channel_name')}\n"
+            f"- Период: {start} … {end}\n"
+            f"- Сообщений: {count}\n"
+            "Выйти: /chat_stop"
+        )
+
+    async def handle_chat_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        session = self.chat_storage.get_active_session(user_id)
+        if not session:
+            await update.message.reply_text("Пока нечего пересобирать. Запусти /chat.")
+            return
+
+        await update.message.reply_text("⏳ Пересобираю контекст чата…")
+        try:
+            channel_id = int(str(session["channel_id"]))
+        except ValueError:
+            await update.message.reply_text("❌ Не смог распарсить channel_id. Запусти /chat заново.")
+            return
+
+        start_date = datetime.fromisoformat(session["start_date"]) if session.get("start_date") else None
+        end_date = datetime.fromisoformat(session["end_date"]) if session.get("end_date") else None
+        await self._build_chat_corpus(
+            user_id=user_id,
+            channel_id=channel_id,
+            channel_name=str(session.get("channel_name") or "Unknown"),
+            start_date=start_date,
+            end_date=end_date,
+            context=context,
+        )
+        await update.message.reply_text("✅ Готово. Можно продолжать.")
+
     def _build_history_period_keyboard(self) -> InlineKeyboardMarkup:
+        return self._build_period_keyboard("history")
+
+    def _build_history_channel_keyboard(self) -> InlineKeyboardMarkup:
+        return self._build_channel_keyboard("history")
+
+    def _build_chat_period_keyboard(self) -> InlineKeyboardMarkup:
+        return self._build_period_keyboard("chat")
+
+    def _build_chat_channel_keyboard(self) -> InlineKeyboardMarkup:
+        return self._build_channel_keyboard("chat")
+
+    def _build_period_keyboard(self, prefix: str) -> InlineKeyboardMarkup:
         keyboard = [
             [
-                InlineKeyboardButton("День", callback_data="history_period:day"),
-                InlineKeyboardButton("Неделя", callback_data="history_period:week"),
+                InlineKeyboardButton("День", callback_data=f"{prefix}_period:day"),
+                InlineKeyboardButton("Неделя", callback_data=f"{prefix}_period:week"),
             ],
             [
-                InlineKeyboardButton("Месяц", callback_data="history_period:month"),
-                InlineKeyboardButton("Год", callback_data="history_period:year"),
+                InlineKeyboardButton("Месяц", callback_data=f"{prefix}_period:month"),
+                InlineKeyboardButton("Год", callback_data=f"{prefix}_period:year"),
             ],
-            [InlineKeyboardButton("Все время", callback_data="history_period:all")],
-            [InlineKeyboardButton("Произвольно", callback_data="history_period:custom")],
-            [InlineKeyboardButton("Отмена", callback_data="history_period:cancel")],
+            [InlineKeyboardButton("Все время", callback_data=f"{prefix}_period:all")],
+            [InlineKeyboardButton("Произвольно", callback_data=f"{prefix}_period:custom")],
+            [InlineKeyboardButton("Отмена", callback_data=f"{prefix}_period:cancel")],
         ]
         return InlineKeyboardMarkup(keyboard)
 
-    def _build_history_channel_keyboard(self) -> InlineKeyboardMarkup:
+    def _build_channel_keyboard(self, prefix: str) -> InlineKeyboardMarkup:
         keyboard = [
-            [InlineKeyboardButton(channel.name, callback_data=f"history:{channel.id}")]
+            [InlineKeyboardButton(channel.name, callback_data=f"{prefix}:{channel.id}")]
             for channel in self.config.channels
         ]
-        keyboard.append([InlineKeyboardButton("Отмена", callback_data="history_period:cancel")])
+        keyboard.append([InlineKeyboardButton("Отмена", callback_data=f"{prefix}_period:cancel")])
         return InlineKeyboardMarkup(keyboard)
+
+    def _resolve_period(self, period_arg: Optional[str]) -> tuple[Optional[datetime], Optional[datetime], str]:
+        start_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None
+        period_display = "За все время"
+
+        if period_arg:
+            if period_arg.endswith("d") and period_arg[:-1].isdigit():
+                days = int(period_arg[:-1])
+                start_date = datetime.utcnow() - timedelta(days=days)
+                period_display = f"Последние {days} дн."
+            elif period_arg.endswith("m") and period_arg[:-1].isdigit():
+                months = int(period_arg[:-1])
+                start_date = datetime.utcnow() - timedelta(days=months * 30)
+                period_display = f"Последние {months} мес."
+            elif period_arg.endswith("y") and period_arg[:-1].isdigit():
+                years = int(period_arg[:-1])
+                start_date = datetime.utcnow() - timedelta(days=years * 365)
+                period_display = f"Последние {years} г."
+            elif "-" in period_arg:
+                parts = period_arg.split("-")
+                if len(parts) == 2:
+                    start_date = datetime.strptime(parts[0], "%d.%m.%Y")
+                    end_date = datetime.strptime(parts[1], "%d.%m.%Y").replace(
+                        hour=23, minute=59, second=59
+                    )
+                    period_display = f"{parts[0]} - {parts[1]}"
+
+        return start_date, end_date, period_display
+
+    def _is_recent_question(self, question: str) -> bool:
+        q = (question or "").strip().lower()
+        if not q:
+            return False
+        if re.search(r"\b(последн|свеж|что нового|новост|сегодня|вчера)\b", q):
+            return True
+        if re.search(r"\b(последни(е|й|х)|последняя|последнее)\b", q):
+            return True
+        return False
+
+    @staticmethod
+    def _apply_citation_sources(answer: str, index_to_link: dict, links: list) -> str:
+        max_index = max(index_to_link.keys(), default=0)
+        cited_indices = [int(x) for x in re.findall(r"\[(\d{1,3})\]", answer)]
+        cited_unique = []
+        for idx in cited_indices:
+            if idx < 1 or idx > max_index:
+                continue
+            if idx not in cited_unique:
+                cited_unique.append(idx)
+
+        sources = OrderedDict()
+        for idx in cited_unique:
+            link = index_to_link.get(idx)
+            if link:
+                sources[idx] = link
+
+        if sources:
+            sources_block = "\n".join(f"- [{idx}] {link}" for idx, link in list(sources.items())[:8])
+            if "источники" in answer.lower():
+                answer = re.sub(r"(?is)\n+источники\s*:\s*.*$", "", answer).strip()
+            return f"{answer}\n\nИсточники:\n{sources_block}"
+
+        unique_links = []
+        for l in links:
+            if l not in unique_links:
+                unique_links.append(l)
+        if unique_links and "источники" not in answer.lower():
+            sources_block = "\n".join(f"- {l}" for l in unique_links[:3])
+            return f"{answer}\n\nИсточники (возможные):\n{sources_block}"
+
+        return answer
+
+    @staticmethod
+    def _apply_citation_sources_html(answer: str, index_to_link: dict, links: list) -> str:
+        max_index = max(index_to_link.keys(), default=0)
+        cited_indices = [int(x) for x in re.findall(r"\[(\d{1,3})\]", answer)]
+        cited_unique = []
+        for idx in cited_indices:
+            if idx < 1 or idx > max_index:
+                continue
+            if idx not in cited_unique:
+                cited_unique.append(idx)
+
+        sources = OrderedDict()
+        for idx in cited_unique:
+            link = index_to_link.get(idx)
+            if link:
+                sources[idx] = link
+
+        if "источники" in answer.lower():
+            answer = re.sub(r"(?is)\n+источники\s*:\s*.*$", "", answer).strip()
+
+        def linkify_citations(text: str) -> str:
+            parts = []
+            last = 0
+            for m in re.finditer(r"\[(\d{1,3})\]", text):
+                parts.append(html.escape(text[last : m.start()]))
+                idx = int(m.group(1))
+                label = f"[{idx}]"
+                link = index_to_link.get(idx)
+                if link:
+                    safe_link = html.escape(link, quote=True)
+                    parts.append(f'<b><a href="{safe_link}">{label}</a></b>')
+                else:
+                    parts.append(html.escape(label))
+                last = m.end()
+            parts.append(html.escape(text[last:]))
+            return "".join(parts)
+
+        body_plain = answer
+        if len(body_plain) > 3500:
+            body_plain = body_plain[:3497] + "…"
+
+        while True:
+            body_html = linkify_citations(body_plain)
+            if sources:
+                sources_lines = "\n".join(
+                    f'- <a href="{html.escape(link, quote=True)}"><b>[{idx}]</b> {html.escape(link)}</a>'
+                    for idx, link in list(sources.items())[:8]
+                )
+                final_html = f"{body_html}\n\n<b>Источники:</b>\n{sources_lines}"
+            else:
+                unique_links = []
+                for l in links:
+                    if l not in unique_links:
+                        unique_links.append(l)
+                if unique_links:
+                    sources_lines = "\n".join(
+                        f'- <a href="{html.escape(l, quote=True)}">{html.escape(l)}</a>'
+                        for l in unique_links[:3]
+                    )
+                    final_html = f"{body_html}\n\n<b>Источники (возможные):</b>\n{sources_lines}"
+                else:
+                    final_html = body_html
+
+            if len(final_html) <= 3800 or len(body_plain) <= 1200:
+                return final_html
+
+            body_plain = body_plain[: max(0, len(body_plain) - 250)].rstrip() + "…"
 
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -420,6 +702,47 @@ class BotCommandHandler:
             await query.edit_message_text(
                 "📊 Выберите канал для анализа истории:",
                 reply_markup=self._build_history_channel_keyboard(),
+            )
+            return
+
+        if data.startswith("chat_period:"):
+            action = data.split(":", 1)[1]
+
+            if action == "cancel":
+                context.user_data.pop("chat_period", None)
+                context.user_data.pop("awaiting_chat_days", None)
+                context.user_data.pop("chat_session_id", None)
+                await query.edit_message_text("❌ Отменено.")
+                return
+
+            if action == "custom":
+                context.user_data["awaiting_chat_days"] = True
+                await query.edit_message_text(
+                    "✍️ Введите количество дней для чата (например: 7).\n"
+                    "Можно от 1 до 3650.",
+                )
+                return
+
+            if action == "day":
+                period_arg: Optional[str] = "1d"
+            elif action == "week":
+                period_arg = "7d"
+            elif action == "month":
+                period_arg = "30d"
+            elif action == "year":
+                period_arg = "365d"
+            elif action == "all":
+                period_arg = None
+            else:
+                await query.edit_message_text("❌ Ошибка: неизвестный период.")
+                return
+
+            context.user_data["chat_period"] = period_arg
+            context.user_data.pop("awaiting_chat_days", None)
+
+            await query.edit_message_text(
+                "💬 Выберите канал для чата по истории:",
+                reply_markup=self._build_chat_channel_keyboard(),
             )
             return
 
@@ -519,6 +842,55 @@ class BotCommandHandler:
             await query.edit_message_text("❌ Удаление отменено.")
             return
 
+        if data.startswith("chat:"):
+            try:
+                channel_id = int(data.split(":")[1])
+            except (ValueError, IndexError):
+                await query.edit_message_text("❌ Ошибка: неверный ID канала")
+                return
+
+            period_arg = context.user_data.get("chat_period")
+            try:
+                start_date, end_date, period_display = self._resolve_period(period_arg)
+            except ValueError:
+                await query.edit_message_text("❌ Ошибка в формате даты.")
+                return
+
+            channel_name = "Unknown"
+            for ch in self.config.channels:
+                if str(ch.id) == str(channel_id):
+                    channel_name = ch.name
+                    break
+
+            await query.edit_message_text(
+                f"⏳ Собираю историю для чата: **{channel_name}** ({period_display})...\n"
+                "Это может занять время.",
+                parse_mode="Markdown",
+            )
+
+            user_id = update.effective_user.id
+            session_id = await self._build_chat_corpus(
+                user_id=user_id,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                start_date=start_date,
+                end_date=end_date,
+                context=context,
+            )
+            context.user_data.pop("chat_period", None)
+            context.user_data.pop("awaiting_chat_days", None)
+
+            count = self.chat_storage.count_corpus_messages(session_id)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"✅ Готово. Сообщений в контексте: {count}.\n"
+                    "Теперь просто пиши вопрос обычным текстом.\n"
+                    "Выйти: /chat_stop"
+                ),
+            )
+            return
+
         if not data.startswith("history:"):
             return
 
@@ -612,33 +984,219 @@ class BotCommandHandler:
         if not self.is_authorized(user_id):
             return
 
-        if not context.user_data.get("awaiting_history_days"):
+        text = (update.message.text or "").strip()
+        if not text:
             return
 
-        text = (update.message.text or "").strip()
-        if text.lower() in {"отмена", "cancel"}:
+        if context.user_data.get("awaiting_history_days"):
+            if text.lower() in {"отмена", "cancel"}:
+                context.user_data.pop("awaiting_history_days", None)
+                context.user_data.pop("history_period", None)
+                await update.message.reply_text("❌ Отменено.")
+                return
+
+            try:
+                days = int(text)
+            except ValueError:
+                await update.message.reply_text("❌ Введите целое число от 1 до 3650 (или «отмена»).")
+                return
+
+            if days < 1 or days > 3650:
+                await update.message.reply_text("❌ Введите число от 1 до 3650 (или «отмена»).")
+                return
+
+            context.user_data["history_period"] = f"{days}d"
             context.user_data.pop("awaiting_history_days", None)
-            context.user_data.pop("history_period", None)
-            await update.message.reply_text("❌ Отменено.")
+
+            await update.message.reply_text(
+                "📊 Выберите канал для анализа истории:",
+                reply_markup=self._build_history_channel_keyboard(),
+            )
             return
+
+        if context.user_data.get("awaiting_chat_days"):
+            if text.lower() in {"отмена", "cancel"}:
+                context.user_data.pop("awaiting_chat_days", None)
+                context.user_data.pop("chat_period", None)
+                await update.message.reply_text("❌ Отменено.")
+                return
+
+            try:
+                days = int(text)
+            except ValueError:
+                await update.message.reply_text("❌ Введите целое число от 1 до 3650 (или «отмена»).")
+                return
+
+            if days < 1 or days > 3650:
+                await update.message.reply_text("❌ Введите число от 1 до 3650 (или «отмена»).")
+                return
+
+            context.user_data["chat_period"] = f"{days}d"
+            context.user_data.pop("awaiting_chat_days", None)
+            await update.message.reply_text(
+                "💬 Выберите канал для чата по истории:",
+                reply_markup=self._build_chat_channel_keyboard(),
+            )
+            return
+
+        session_id = context.user_data.get("chat_session_id")
+        if not session_id:
+            session = self.chat_storage.get_active_session(user_id)
+            session_id = session["id"] if session else None
+            if session_id:
+                context.user_data["chat_session_id"] = session_id
+
+        if session_id:
+            await self._answer_chat_question(
+                session_id=session_id,
+                question=text,
+                update=update,
+                context=context,
+            )
+            return
+
+        return
+
+    async def _build_chat_corpus(
+        self,
+        user_id: int,
+        channel_id: int,
+        channel_name: str,
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> str:
+        collector = MessageCollector(self.config, self.logger)
+        try:
+            await collector.connect()
+            messages_by_channel = await collector.fetch_messages(
+                hours=0,
+                start_date=start_date,
+                end_date=end_date,
+                target_channel_id=channel_id,
+            )
+        finally:
+            await collector.disconnect()
+
+        messages = []
+        for msgs in messages_by_channel.values():
+            messages.extend(msgs)
+
+        session_id = self.chat_storage.create_session(
+            user_id=user_id,
+            channel_id=str(channel_id),
+            channel_name=channel_name,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        records = [
+            {
+                "message_id": m.message_id,
+                "timestamp": m.timestamp.isoformat(),
+                "sender": m.sender,
+                "text": m.text,
+                "link": m.link,
+                "has_media": m.has_media,
+                "media_type": m.media_type,
+            }
+            for m in messages
+        ]
+        self.chat_storage.save_corpus_messages(session_id, records)
+        context.user_data["chat_session_id"] = session_id
+        return session_id
+
+    async def _answer_chat_question(
+        self,
+        session_id: str,
+        question: str,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        assert update.message is not None
+        processing_message = await update.message.reply_text("⏳ Думаю…")
 
         try:
-            days = int(text)
-        except ValueError:
-            await update.message.reply_text("❌ Введите целое число от 1 до 3650 (или «отмена»).")
-            return
+            session = self.chat_storage.get_session(session_id)
+            channel_name = session.get("channel_name") if session else None
 
-        if days < 1 or days > 3650:
-            await update.message.reply_text("❌ Введите число от 1 до 3650 (или «отмена»).")
-            return
+            search_hits = [] if self._is_recent_question(question) else self.chat_storage.search_corpus(
+                session_id=session_id, query=question, limit=10
+            )
+            recent_hits = self.chat_storage.get_recent_messages(session_id=session_id, limit=12)
 
-        context.user_data["history_period"] = f"{days}d"
-        context.user_data.pop("awaiting_history_days", None)
+            if self._is_recent_question(question):
+                combined = recent_hits
+            else:
+                combined = []
+                seen_ids = set()
+                for h in search_hits + recent_hits:
+                    mid = h.get("message_id")
+                    if mid in seen_ids:
+                        continue
+                    seen_ids.add(mid)
+                    combined.append(h)
 
-        await update.message.reply_text(
-            "📊 Выберите канал для анализа истории:",
-            reply_markup=self._build_history_channel_keyboard(),
-        )
+            if not combined:
+                answer = (
+                    "Контекст для этого чата пустой.\n"
+                    "Пересобери контекст: /chat_reset"
+                )
+                self.chat_storage.append_turn(session_id, "user", question)
+                self.chat_storage.append_turn(session_id, "assistant", answer)
+                await processing_message.edit_text(
+                    html.escape(answer),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                return
+
+            snippets = []
+            links = []
+            index_to_link = {}
+            context_budget_chars = 9000
+            used_chars = 0
+            added = 0
+            for i, h in enumerate(combined, 1):
+                text = (h.get("text") or "").replace("\n", " ").strip()
+                if len(text) > 900:
+                    text = text[:900] + "…"
+                link = h.get("link") or "#"
+                snippet = f"[{i}] [{h.get('timestamp')}] {h.get('sender')}: {text}\nСсылка: {link}"
+
+                if added > 0 and used_chars + len(snippet) > context_budget_chars:
+                    break
+
+                if link != "#":
+                    links.append(link)
+                    index_to_link[i] = link
+                snippets.append(snippet)
+                used_chars += len(snippet)
+                added += 1
+
+            context_snippets = "\n\n".join(snippets)
+            recent_turns = self.chat_storage.get_recent_turns(session_id=session_id, limit=6)
+            answer = await self.chat_answerer.answer(
+                question=question,
+                context_snippets=context_snippets,
+                chat_turns=recent_turns,
+                channel_name=channel_name,
+            )
+
+            answer_plain = self._apply_citation_sources(answer=answer, index_to_link=index_to_link, links=links)
+            answer_html = self._apply_citation_sources_html(answer=answer, index_to_link=index_to_link, links=links)
+            if len(answer_plain) > 3800:
+                answer_plain = answer_plain[:3797] + "…"
+
+            self.chat_storage.append_turn(session_id, "user", question)
+            self.chat_storage.append_turn(session_id, "assistant", answer_plain)
+            await processing_message.edit_text(
+                answer_html,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            self.logger.error(f"Chat answer failed: {e}", exc_info=True)
+            await processing_message.edit_text("❌ Ошибка при формировании ответа. Попробуй ещё раз.")
 
     async def handle_cleanup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -734,6 +1292,16 @@ class BotCommandHandler:
         text, reply_markup = self._build_status_message()
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
+    async def handle_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        await update.message.reply_text(f"🧩 Telebrief build: {self.build_id}")
+
     async def handle_autoschedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         assert update.effective_user is not None
         assert update.message is not None
@@ -774,47 +1342,6 @@ class BotCommandHandler:
 
         user_id = update.effective_user.id
         if not self.is_authorized(user_id):
-            return
-
-        if data.startswith("history_period:"):
-            action = data.split(":", 1)[1]
-
-            if action == "cancel":
-                context.user_data.pop("history_period", None)
-                context.user_data.pop("awaiting_history_days", None)
-                await query.edit_message_text("❌ Отменено.")
-                return
-
-            if action == "custom":
-                context.user_data["awaiting_history_days"] = True
-                await query.edit_message_text(
-                    "✍️ Введите количество дней для анализа (например: 7).\n"
-                    "Можно от 1 до 3650.",
-                )
-                return
-
-            period_arg: Optional[str]
-            if action == "day":
-                period_arg = "1d"
-            elif action == "week":
-                period_arg = "7d"
-            elif action == "month":
-                period_arg = "30d"
-            elif action == "year":
-                period_arg = "365d"
-            elif action == "all":
-                period_arg = None
-            else:
-                await query.edit_message_text("❌ Ошибка: неизвестный период.")
-                return
-
-            context.user_data["history_period"] = period_arg
-            context.user_data.pop("awaiting_history_days", None)
-
-            await query.edit_message_text(
-                "📊 Выберите канал для анализа истории:",
-                reply_markup=self._build_history_channel_keyboard(),
-            )
             return
 
         args = context.args
@@ -963,6 +1490,10 @@ class BotCommandHandler:
 
 /digest - Сгенерировать дайджест за последние 24 часа
 /history - Анализ истории канала (меню выбора)
+/chat - Чат по выбранной истории канала
+/chat_status - Показать текущий чат-контекст
+/chat_reset - Пересобрать чат-контекст
+/chat_stop - Выйти из режима чата
 /remove - Удалить канал из списка (меню выбора)
 /cleanup - Удалить предыдущие дайджесты вручную
 /autoschedule - Включить/выключить автодайджест

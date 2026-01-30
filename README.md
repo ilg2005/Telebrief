@@ -76,7 +76,12 @@ Open Telegram and message your bot:
 | `/digest` | Generate and send digest for last 24 hours instantly |
 | `/history` | Analyze channel history (period + channel menu) |
 | `/status` | Show configuration, next scheduled run, and system info |
+| `/version` | Show running build/version (useful after updates) |
 | `/model` | Show or set the OpenRouter model for generation |
+| `/chat` | Ask questions about the selected channel history |
+| `/chat_status` | Show current chat context |
+| `/chat_reset` | Rebuild chat context from the channel |
+| `/chat_stop` | Exit chat mode |
 | `/autoschedule on|off` | Enable/disable daily auto-digests |
 | `/cleanup` | Manually delete old digest messages |
 
@@ -84,6 +89,11 @@ Open Telegram and message your bot:
 - Run `/model` to see the current model and the default one
 - Run `/model <id>` to set a model ID copied from OpenRouter (e.g. `anthropic/claude-3.5-sonnet`)
 - Use the “Reset to default” button to revert back to the default model from config/env
+
+**Chat citations (sources)**:
+- Chat answers include citations like `[2]` that refer to a specific message in the context.
+- The `Источники:` block lists only the cited message links as `- [2] https://t.me/.../495` so you can click and jump to the exact post.
+- If you don't see `[N]` in the answer, you are likely running an older build. Check `/version` (or `/status`) after updating.
 
 ---
 

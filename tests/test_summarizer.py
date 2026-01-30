@@ -98,6 +98,7 @@ def test_format_messages_truncate_long(sample_config, mock_logger):
         timestamp=datetime(2025, 12, 14, 10, 0, 0),
         link="https://t.me/test/1",
         channel_name="Test",
+        message_id=1,
         has_media=False,
         media_type="",
     )
