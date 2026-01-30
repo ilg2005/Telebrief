@@ -15,7 +15,7 @@ from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Upd
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.chat_storage import ChatStorage
-from src.chat_answerer import ChatAnswerer
+from src.chat_answerer import ChatAnswerer, LLMResponseError
 from src.collector import MessageCollector
 from src.config_loader import Config
 from src.core import generate_and_send_channel_digests, generate_history_digest
@@ -513,16 +513,6 @@ class BotCommandHandler:
 
         return start_date, end_date, period_display
 
-    def _is_recent_question(self, question: str) -> bool:
-        q = (question or "").strip().lower()
-        if not q:
-            return False
-        if re.search(r"\b(последн|свеж|что нового|новост|сегодня|вчера)\b", q):
-            return True
-        if re.search(r"\b(последни(е|й|х)|последняя|последнее)\b", q):
-            return True
-        return False
-
     @staticmethod
     def _apply_citation_sources(answer: str, index_to_link: dict, links: list) -> str:
         max_index = max(index_to_link.keys(), default=0)
@@ -891,6 +881,7 @@ class BotCommandHandler:
                 chat_id=user_id,
                 text=(
                     f"✅ Готово. Сообщений в контексте: {count}.\n"
+                    f"Лимит на сбор: {self.config.settings.max_messages_per_channel}.\n"
                     "Теперь просто пиши вопрос обычным текстом.\n"
                     "Выйти: /chat_stop"
                 ),
@@ -1124,24 +1115,11 @@ class BotCommandHandler:
             session = self.chat_storage.get_session(session_id)
             channel_name = session.get("channel_name") if session else None
 
-            search_hits = [] if self._is_recent_question(question) else self.chat_storage.search_corpus(
-                session_id=session_id, query=question, limit=10
-            )
-            recent_hits = self.chat_storage.get_recent_messages(session_id=session_id, limit=12)
+            corpus_messages = []
+            for batch in self.chat_storage.iter_corpus_messages(session_id=session_id, batch_size=200, order="asc"):
+                corpus_messages.extend(batch)
 
-            if self._is_recent_question(question):
-                combined = recent_hits
-            else:
-                combined = []
-                seen_ids = set()
-                for h in search_hits + recent_hits:
-                    mid = h.get("message_id")
-                    if mid in seen_ids:
-                        continue
-                    seen_ids.add(mid)
-                    combined.append(h)
-
-            if not combined:
+            if not corpus_messages:
                 answer = (
                     "Контекст для этого чата пустой.\n"
                     "Пересобери контекст: /chat_reset"
@@ -1155,36 +1133,19 @@ class BotCommandHandler:
                 )
                 return
 
-            snippets = []
-            links = []
-            index_to_link = {}
-            context_budget_chars = 9000
-            used_chars = 0
-            added = 0
-            for i, h in enumerate(combined, 1):
-                text = (h.get("text") or "").replace("\n", " ").strip()
-                if len(text) > 900:
-                    text = text[:900] + "…"
-                link = h.get("link") or "#"
-                snippet = f"[{i}] [{h.get('timestamp')}] {h.get('sender')}: {text}\nСсылка: {link}"
+            async def on_progress(done: int, total: int) -> None:
+                try:
+                    await processing_message.edit_text(f"⏳ Думаю… ({done}/{total})")
+                except Exception:
+                    return
 
-                if added > 0 and used_chars + len(snippet) > context_budget_chars:
-                    break
-
-                if link != "#":
-                    links.append(link)
-                    index_to_link[i] = link
-                snippets.append(snippet)
-                used_chars += len(snippet)
-                added += 1
-
-            context_snippets = "\n\n".join(snippets)
             recent_turns = self.chat_storage.get_recent_turns(session_id=session_id, limit=6)
-            answer = await self.chat_answerer.answer(
+            answer, index_to_link, links = await self.chat_answerer.answer_full_scan(
                 question=question,
-                context_snippets=context_snippets,
+                messages=corpus_messages,
                 chat_turns=recent_turns,
                 channel_name=channel_name,
+                progress_callback=on_progress,
             )
 
             answer_plain = self._apply_citation_sources(answer=answer, index_to_link=index_to_link, links=links)
@@ -1198,6 +1159,10 @@ class BotCommandHandler:
                 answer_html,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
+            )
+        except LLMResponseError:
+            await processing_message.edit_text(
+                "❌ Провайдер ответов вернул пустой результат. Попробуй ещё раз через 10–20 секунд.",
             )
         except Exception as e:
             self.logger.error(f"Chat answer failed: {e}", exc_info=True)
