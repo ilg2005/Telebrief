@@ -74,6 +74,7 @@ Open Telegram and message your bot:
 | `/start` | Show welcome message and available commands |
 | `/help` | Display help message with all commands |
 | `/digest` | Generate and send digest for last 24 hours instantly |
+| `/history` | Analyze channel history (period + channel menu) |
 | `/status` | Show configuration, next scheduled run, and system info |
 | `/model` | Show or set the OpenRouter model for generation |
 | `/autoschedule on|off` | Enable/disable daily auto-digests |

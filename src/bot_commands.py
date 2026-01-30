@@ -64,6 +64,10 @@ class BotCommandHandler:
         # Add message handler for forwarded messages (ID checker)
         self.app.add_handler(MessageHandler(filters.FORWARDED, self.handle_id_check))
 
+        self.app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text)
+        )
+
         self.logger.info("Bot command handlers registered")
         return self.app
 
@@ -288,28 +292,49 @@ class BotCommandHandler:
 
         self.logger.info(f"History menu requested by user {user_id}")
 
-        # Parse arguments to determine period (optional)
         args = context.args
         period_arg = None
         if args:
             period_arg = args[0]  # Take first argument as period (e.g. 7d)
 
-        # Store period in user_data for later use
         context.user_data["history_period"] = period_arg
+        context.user_data.pop("awaiting_history_days", None)
 
-        # Create keyboard with channels
-        keyboard = []
-        for channel in self.config.channels:
-            # Callback data: history:CHANNEL_ID
-            keyboard.append(
-                [InlineKeyboardButton(channel.name, callback_data=f"history:{channel.id}")]
+        if not period_arg:
+            await update.message.reply_text(
+                "📅 Выберите период для анализа истории:",
+                reply_markup=self._build_history_period_keyboard(),
             )
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            return
 
         await update.message.reply_text(
-            "📊 Выберите канал для анализа истории:", reply_markup=reply_markup
+            "📊 Выберите канал для анализа истории:",
+            reply_markup=self._build_history_channel_keyboard(),
         )
+
+    def _build_history_period_keyboard(self) -> InlineKeyboardMarkup:
+        keyboard = [
+            [
+                InlineKeyboardButton("День", callback_data="history_period:day"),
+                InlineKeyboardButton("Неделя", callback_data="history_period:week"),
+            ],
+            [
+                InlineKeyboardButton("Месяц", callback_data="history_period:month"),
+                InlineKeyboardButton("Год", callback_data="history_period:year"),
+            ],
+            [InlineKeyboardButton("Все время", callback_data="history_period:all")],
+            [InlineKeyboardButton("Произвольно", callback_data="history_period:custom")],
+            [InlineKeyboardButton("Отмена", callback_data="history_period:cancel")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    def _build_history_channel_keyboard(self) -> InlineKeyboardMarkup:
+        keyboard = [
+            [InlineKeyboardButton(channel.name, callback_data=f"history:{channel.id}")]
+            for channel in self.config.channels
+        ]
+        keyboard.append([InlineKeyboardButton("Отмена", callback_data="history_period:cancel")])
+        return InlineKeyboardMarkup(keyboard)
 
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -356,6 +381,46 @@ class BotCommandHandler:
 
             text, reply_markup = self._build_status_message()
             await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
+            return
+
+        if data.startswith("history_period:"):
+            action = data.split(":", 1)[1]
+
+            if action == "cancel":
+                context.user_data.pop("history_period", None)
+                context.user_data.pop("awaiting_history_days", None)
+                await query.edit_message_text("❌ Отменено.")
+                return
+
+            if action == "custom":
+                context.user_data["awaiting_history_days"] = True
+                await query.edit_message_text(
+                    "✍️ Введите количество дней для анализа (например: 7).\n"
+                    "Можно от 1 до 3650.",
+                )
+                return
+
+            if action == "day":
+                period_arg: Optional[str] = "1d"
+            elif action == "week":
+                period_arg = "7d"
+            elif action == "month":
+                period_arg = "30d"
+            elif action == "year":
+                period_arg = "365d"
+            elif action == "all":
+                period_arg = None
+            else:
+                await query.edit_message_text("❌ Ошибка: неизвестный период.")
+                return
+
+            context.user_data["history_period"] = period_arg
+            context.user_data.pop("awaiting_history_days", None)
+
+            await query.edit_message_text(
+                "📊 Выберите канал для анализа истории:",
+                reply_markup=self._build_history_channel_keyboard(),
+            )
             return
 
         # Handle Add Channel actions
@@ -535,6 +600,45 @@ class BotCommandHandler:
         except Exception as e:
             self.logger.error(f"Error in history generation: {e}", exc_info=True)
             await context.bot.send_message(chat_id=user_id, text=f"❌ Ошибка: {str(e)}")
+        finally:
+            context.user_data.pop("history_period", None)
+            context.user_data.pop("awaiting_history_days", None)
+
+    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        if not context.user_data.get("awaiting_history_days"):
+            return
+
+        text = (update.message.text or "").strip()
+        if text.lower() in {"отмена", "cancel"}:
+            context.user_data.pop("awaiting_history_days", None)
+            context.user_data.pop("history_period", None)
+            await update.message.reply_text("❌ Отменено.")
+            return
+
+        try:
+            days = int(text)
+        except ValueError:
+            await update.message.reply_text("❌ Введите целое число от 1 до 3650 (или «отмена»).")
+            return
+
+        if days < 1 or days > 3650:
+            await update.message.reply_text("❌ Введите число от 1 до 3650 (или «отмена»).")
+            return
+
+        context.user_data["history_period"] = f"{days}d"
+        context.user_data.pop("awaiting_history_days", None)
+
+        await update.message.reply_text(
+            "📊 Выберите канал для анализа истории:",
+            reply_markup=self._build_history_channel_keyboard(),
+        )
 
     async def handle_cleanup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -670,6 +774,47 @@ class BotCommandHandler:
 
         user_id = update.effective_user.id
         if not self.is_authorized(user_id):
+            return
+
+        if data.startswith("history_period:"):
+            action = data.split(":", 1)[1]
+
+            if action == "cancel":
+                context.user_data.pop("history_period", None)
+                context.user_data.pop("awaiting_history_days", None)
+                await query.edit_message_text("❌ Отменено.")
+                return
+
+            if action == "custom":
+                context.user_data["awaiting_history_days"] = True
+                await query.edit_message_text(
+                    "✍️ Введите количество дней для анализа (например: 7).\n"
+                    "Можно от 1 до 3650.",
+                )
+                return
+
+            period_arg: Optional[str]
+            if action == "day":
+                period_arg = "1d"
+            elif action == "week":
+                period_arg = "7d"
+            elif action == "month":
+                period_arg = "30d"
+            elif action == "year":
+                period_arg = "365d"
+            elif action == "all":
+                period_arg = None
+            else:
+                await query.edit_message_text("❌ Ошибка: неизвестный период.")
+                return
+
+            context.user_data["history_period"] = period_arg
+            context.user_data.pop("awaiting_history_days", None)
+
+            await query.edit_message_text(
+                "📊 Выберите канал для анализа истории:",
+                reply_markup=self._build_history_channel_keyboard(),
+            )
             return
 
         args = context.args
