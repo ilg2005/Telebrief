@@ -772,17 +772,17 @@ class BotCommandHandler:
                     return
                 
                 channel_info = context.user_data["pending_channel"]
-                channel_id = channel_info["id"]
+                channel_id = str(channel_info["id"])
                 channel_name = channel_info["name"]
                 
-                # Add to config file
-                from src.config_loader import add_channel_to_config_file, ChannelConfig
-                
-                success = add_channel_to_config_file("config.yaml", channel_id, channel_name)
+                from src.config_loader import ChannelConfig
+
+                success = self.chat_storage.add_channel(channel_id, channel_name)
                 
                 if success:
-                    # Update runtime config
-                    self.config.channels.append(ChannelConfig(id=channel_id, name=channel_name))
+                    existing_ids = {str(ch.id) for ch in self.config.channels}
+                    if str(channel_id) not in existing_ids:
+                        self.config.channels.append(ChannelConfig(id=str(channel_id), name=channel_name))
                     
                     await query.edit_message_reply_markup(reply_markup=None)
                     await context.bot.send_message(
@@ -804,7 +804,7 @@ class BotCommandHandler:
         # Handle Remove Channel actions
         if data.startswith("remove_ask:"):
             try:
-                channel_id = int(data.split(":")[1])
+                channel_id = data.split(":")[1]
                 channel_name = "Unknown"
                 for ch in self.config.channels:
                     if str(ch.id) == str(channel_id):
@@ -829,11 +829,9 @@ class BotCommandHandler:
 
         if data.startswith("remove_confirm:"):
             try:
-                channel_id = int(data.split(":")[1])
-                
-                # Remove from config file
-                from src.config_loader import remove_channel_from_config_file
-                success = remove_channel_from_config_file("config.yaml", channel_id)
+                channel_id = data.split(":")[1]
+
+                success = self.chat_storage.remove_channel(channel_id)
                 
                 if success:
                     # Remove from runtime config
@@ -852,9 +850,8 @@ class BotCommandHandler:
             return
 
         if data.startswith("chat:"):
-            try:
-                channel_id = int(data.split(":")[1])
-            except (ValueError, IndexError):
+            channel_id = data.split(":")[1] if ":" in data else ""
+            if not channel_id:
                 await query.edit_message_text("❌ Ошибка: неверный ID канала")
                 return
 
@@ -904,9 +901,8 @@ class BotCommandHandler:
             return
 
         # Extract channel ID
-        try:
-            channel_id = int(data.split(":")[1])
-        except (ValueError, IndexError):
+        channel_id = data.split(":")[1] if ":" in data else ""
+        if not channel_id:
             await query.edit_message_text("❌ Ошибка: неверный ID канала")
             return
 
@@ -945,7 +941,7 @@ class BotCommandHandler:
         # Find channel name for display
         channel_name = "Unknown"
         for ch in self.config.channels:
-            if ch.id == channel_id:
+            if str(ch.id) == str(channel_id):
                 channel_name = ch.name
                 break
 
@@ -1069,7 +1065,7 @@ class BotCommandHandler:
     async def _build_chat_corpus(
         self,
         user_id: int,
-        channel_id: int,
+        channel_id: str,
         channel_name: str,
         start_date: Optional[datetime],
         end_date: Optional[datetime],

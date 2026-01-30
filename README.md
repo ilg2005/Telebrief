@@ -27,7 +27,7 @@
 
 Before you begin, you'll need:
 
-1. **Python 3.10+** - [Download Python](https://www.python.org/downloads/)
+1. **Python 3.12+** - [Download Python](https://www.python.org/downloads/)
 
 2. **Telegram App Credentials** - [Get from my.telegram.org](https://my.telegram.org)
    - `api_id` and `api_hash`
@@ -62,6 +62,100 @@ docker compose logs -f telebrief
 **Important**: You must create the Telegram session file BEFORE running Docker. The script uses Docker itself, so no additional dependencies needed.
 
 **Tip**: If you want to generate digests only on demand, disable auto mode in the bot: `/autoschedule off`.
+
+---
+
+## 🖥️ VPS Docker Deploy (Long Polling)
+
+Telebrief works via **long polling** (it does not expose an HTTP server), so you **do not need** Nginx/reverse-proxy for it.
+
+### First-time setup
+
+1) **Prepare files on the server**
+
+```bash
+git clone <your-repo-url>
+cd Telebrief
+
+cp .env.example .env
+cp config.yaml.example config.yaml
+```
+
+2) **Fill `.env` and `config.yaml`**
+
+- `.env`: Telegram API credentials + bot token + OpenRouter/OpenAI key
+- `config.yaml`: `target_user_id` and initial channel list (optional; you can add/remove channels via the bot later)
+
+3) **Create Telegram session (required once)**
+
+```bash
+./create_session.sh
+```
+
+This generates `sessions/user.session`. You can run it on the VPS (via SSH) or generate it locally and copy the `sessions/` directory to the server.
+
+4) **Start**
+
+```bash
+docker compose up -d
+docker compose logs -f telebrief
+```
+
+### Migration (move to VPS without losing `sessions/` and `data/`)
+
+If you already have a working instance elsewhere (local machine / another server), copy the persistent directories to the new VPS.
+
+1) Stop the service on the destination VPS:
+
+```bash
+docker compose down
+```
+
+2) Copy persistent data from the source machine to the VPS.
+
+**Option A: rsync (recommended)**
+
+```bash
+rsync -avz ./sessions/ ./data/ user@vps:/opt/telebrief/
+rsync -avz ./.env ./config.yaml ./docker-compose.yml user@vps:/opt/telebrief/
+```
+
+**Option B: scp**
+
+```bash
+scp -r ./sessions ./data user@vps:/opt/telebrief/
+scp ./.env ./config.yaml ./docker-compose.yml user@vps:/opt/telebrief/
+```
+
+3) Start on the VPS:
+
+```bash
+cd /opt/telebrief
+docker compose up -d
+docker compose logs -f telebrief
+```
+
+Tip: if you're migrating from a running server, stop the old container first to avoid concurrent writes to SQLite.
+
+### Persistence & backups
+
+- `sessions/` must be preserved (Telegram user session)
+- `data/` must be preserved (SQLite DB + runtime settings)
+- Minimum backup: `sessions/` + `data/`
+
+### Updating
+
+```bash
+git pull
+docker compose build --pull
+docker compose up -d
+docker compose logs -f telebrief
+```
+
+### Notes
+
+- The channel list is persisted in SQLite (`data/telebrief.db`), so `config.yaml` can be mounted read-only in Docker.
+- `/version` shows `TELEBRIEF_BUILD_ID` (set it in `.env` if you want to see the deployed revision).
 
 ---
 

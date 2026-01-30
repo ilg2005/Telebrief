@@ -235,7 +235,7 @@ async def generate_history_digest(
     end_date: Optional[datetime] = None,
     user_id: Optional[int] = None,
     period_display: str = "История канала",
-    target_channel_id: Optional[int] = None,
+    target_channel_id: Optional[str] = None,
 ) -> bool:
     """
     Generate digest for a specific history period.

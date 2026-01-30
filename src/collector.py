@@ -69,7 +69,7 @@ class MessageCollector:
         hours: int = 24,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        target_channel_id: Optional[int] = None,
+        target_channel_id: Optional[str] = None,
     ) -> Dict[str, List[Message]]:
         """
         Fetch messages from all configured channels.
@@ -102,7 +102,7 @@ class MessageCollector:
 
         for channel_config in self.config.channels:
             # Skip if target_channel_id is set and doesn't match
-            if target_channel_id and channel_config.id != target_channel_id:
+            if target_channel_id and str(channel_config.id) != str(target_channel_id):
                 continue
 
             try:
@@ -180,7 +180,7 @@ class MessageCollector:
 
         try:
             # Get channel entity
-            entity = await self.client.get_entity(channel_config.id)
+            entity = await self.client.get_entity(self._coerce_entity_ref(channel_config.id))
 
             # Fetch messages
             async for message in self.client.iter_messages(
@@ -226,6 +226,18 @@ class MessageCollector:
             raise
 
         return messages
+
+    @staticmethod
+    def _coerce_entity_ref(raw: object) -> object:
+        raw_str = str(raw).strip()
+        if not raw_str:
+            return raw
+        if raw_str.startswith("@"):
+            return raw_str
+        try:
+            return int(raw_str)
+        except ValueError:
+            return raw_str
 
     def _get_media_type(self, message: TelegramMessage) -> str:
         """

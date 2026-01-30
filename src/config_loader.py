@@ -5,11 +5,13 @@ Loads settings from config.yaml and environment variables.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
 import yaml
 from dotenv import load_dotenv
 
+from src.chat_storage import ChatStorage
 from src.runtime_settings import DEFAULT_RUNTIME_SETTINGS_PATH, load_runtime_settings
 
 
@@ -97,13 +99,12 @@ def load_config(config_path: str = "config.yaml") -> Config:
     with open(config_path, "r", encoding="utf-8") as f:
         yaml_config = yaml.safe_load(f)
 
-    # Parse channels
-    channels = [
-        ChannelConfig(id=ch["id"], name=ch["name"]) for ch in yaml_config.get("channels", [])
+    # Parse channels from config as seed. Real source of truth is SQLite (data/telebrief.db).
+    seed_channels = [
+        ChannelConfig(id=str(ch["id"]).strip(), name=str(ch["name"]).strip())
+        for ch in (yaml_config.get("channels", []) or [])
+        if "id" in ch and "name" in ch
     ]
-
-    if not channels:
-        raise ValueError("No channels configured in config.yaml")
 
     # Parse settings
     settings_dict = yaml_config.get("settings", {})
@@ -138,6 +139,27 @@ def load_config(config_path: str = "config.yaml") -> Config:
         max_messages_per_channel=settings_dict.get("max_messages_per_channel", 500),
         api_timeout=settings_dict.get("api_timeout", 30),
     )
+
+    channels: List[ChannelConfig] = []
+    try:
+        db_path_env = os.getenv("TELEBRIEF_CHAT_DB_PATH")
+        db_path = (
+            db_path_env
+            if db_path_env
+            else (str(Path(config_path).parent / "telebrief.db") if config_path != "config.yaml" else None)
+        )
+        storage = ChatStorage(db_path=db_path)
+        storage.ensure_schema()
+        storage.upsert_channels([(c.id, c.name) for c in seed_channels])
+        channels = [ChannelConfig(id=row["id"], name=row["name"]) for row in storage.list_channels()]
+    except Exception:
+        channels = list(seed_channels)
+
+    if not channels:
+        raise ValueError(
+            "No channels configured. Add at least one channel to config.yaml "
+            "or add channels via the bot so they persist in data/telebrief.db."
+        )
 
     if settings.target_user_id == 0:
         raise ValueError(

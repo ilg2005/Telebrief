@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -21,9 +22,36 @@ class ChatStorage:
             "on",
         }
 
+    @contextmanager
+    def _connection(self) -> Iterable[sqlite3.Connection]:
+        conn = self._connect()
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
+
     def ensure_schema(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS channels (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            try:
+                conn.execute("ALTER TABLE channels ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -85,6 +113,77 @@ class ChatStorage:
             "fts_enabled": self._fts_enabled,
         }
 
+    def list_channels(self) -> List[Dict[str, str]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name
+                FROM channels
+                ORDER BY sort_order ASC, name COLLATE NOCASE
+                """
+            ).fetchall()
+
+        return [{"id": str(r[0]), "name": str(r[1])} for r in rows]
+
+    def upsert_channels(self, channels: Iterable[Tuple[str, str]]) -> int:
+        inserted_or_updated = 0
+        now = datetime.utcnow().isoformat()
+        with self._connection() as conn:
+            cur = conn.cursor()
+            rows = []
+            for sort_order, (channel_id, channel_name) in enumerate(channels):
+                channel_id_str = str(channel_id).strip()
+                channel_name_str = str(channel_name).strip()
+                if not channel_id_str or not channel_name_str:
+                    continue
+                rows.append((channel_id_str, channel_name_str, now, sort_order))
+
+            if not rows:
+                return 0
+
+            cur.executemany(
+                """
+                INSERT INTO channels (id, name, created_at, sort_order)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    sort_order = excluded.sort_order
+                """,
+                rows,
+            )
+            inserted_or_updated = cur.rowcount if cur.rowcount != -1 else 0
+
+        return inserted_or_updated
+
+    def add_channel(self, channel_id: str, channel_name: str) -> bool:
+        channel_id_str = str(channel_id).strip()
+        channel_name_str = str(channel_name).strip()
+        if not channel_id_str or not channel_name_str:
+            return False
+
+        now = datetime.utcnow().isoformat()
+        with self._connection() as conn:
+            row = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM channels").fetchone()
+            sort_order = int(row[0]) if row else 0
+            conn.execute(
+                """
+                INSERT INTO channels (id, name, created_at, sort_order)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name = excluded.name
+                """,
+                (channel_id_str, channel_name_str, now, sort_order),
+            )
+        return True
+
+    def remove_channel(self, channel_id: str) -> bool:
+        channel_id_str = str(channel_id).strip()
+        if not channel_id_str:
+            return False
+
+        with self._connection() as conn:
+            cur = conn.execute("DELETE FROM channels WHERE id = ?", (channel_id_str,))
+            return bool(cur.rowcount and cur.rowcount > 0)
+
     def create_session(
         self,
         user_id: int,
@@ -95,7 +194,7 @@ class ChatStorage:
     ) -> str:
         session_id = str(uuid.uuid4())
         created_at = datetime.utcnow().isoformat()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute(
                 "UPDATE chat_sessions SET is_active = 0 WHERE user_id = ? AND is_active = 1",
@@ -119,14 +218,14 @@ class ChatStorage:
         return session_id
 
     def deactivate_active_session(self, user_id: int) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE chat_sessions SET is_active = 0 WHERE user_id = ? AND is_active = 1",
                 (user_id,),
             )
 
     def get_active_session(self, user_id: int) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, user_id, channel_id, channel_name, start_date, end_date, created_at
@@ -152,7 +251,7 @@ class ChatStorage:
         }
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, user_id, channel_id, channel_name, start_date, end_date, created_at, is_active
@@ -179,7 +278,7 @@ class ChatStorage:
 
     def save_corpus_messages(self, session_id: str, messages: Iterable[Dict[str, Any]]) -> int:
         inserted = 0
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("PRAGMA foreign_keys = ON")
             cur = conn.cursor()
             rows: List[Tuple[Any, ...]] = []
@@ -219,7 +318,7 @@ class ChatStorage:
         return inserted
 
     def count_corpus_messages(self, session_id: str) -> int:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT COUNT(1) FROM chat_corpus_messages WHERE session_id = ?",
                 (session_id,),
@@ -231,7 +330,7 @@ class ChatStorage:
         if not q_raw:
             return []
 
-        with self._connect() as conn:
+        with self._connection() as conn:
             def normalize_token(t: str) -> str:
                 if not t:
                     return t
@@ -305,7 +404,7 @@ class ChatStorage:
         ]
 
     def get_recent_messages(self, session_id: str, limit: int = 12) -> List[Dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT message_id, timestamp, sender, text, link
@@ -329,7 +428,7 @@ class ChatStorage:
         ]
 
     def append_turn(self, session_id: str, role: str, content: str) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO chat_turns (session_id, role, content, created_at)
@@ -339,7 +438,7 @@ class ChatStorage:
             )
 
     def get_recent_turns(self, session_id: str, limit: int = 8) -> List[Dict[str, str]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT role, content
