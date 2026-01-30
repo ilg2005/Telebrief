@@ -19,6 +19,7 @@ settings:
   # Scheduling
   schedule_time: "08:00"   # UTC time for daily digest
   timezone: "UTC"
+  enable_scheduler: true
   lookback_hours: 24       # Message collection window
 
   # OpenAI

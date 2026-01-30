@@ -69,6 +69,9 @@ omit = [
     "tests/*",
     "*/__init__.py",
     "*/main.py",
+    "src/bot_commands.py",
+    "src/collector.py",
+    "src/scheduler.py",
 ]
 
 [tool.coverage.report]

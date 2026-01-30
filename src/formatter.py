@@ -31,7 +31,8 @@ class DigestFormatter:
         overview: str,
         channel_summaries: Dict[str, str],
         messages_by_channel: Dict[str, List[Message]],
-        period_display: str = "последние 24 часа",
+        hours: int | None = None,
+        period_display: str | None = None,
     ) -> str:
         """
         Create formatted digest.
@@ -40,7 +41,8 @@ class DigestFormatter:
             overview: Executive summary
             channel_summaries: Per-channel summaries
             messages_by_channel: Original messages (for links)
-            period_display: Text description of the period
+            hours: Lookback period in hours
+            period_display: Text description of the period (overrides hours)
         """
         self.logger.info("Formatting digest")
         self.logger.debug(
@@ -52,7 +54,7 @@ class DigestFormatter:
         parts = []
 
         # Header
-        header = self._create_header(period_display)
+        header = self._create_header(period_display or (hours if hours is not None else 24))
         parts.append(header)
 
         # Overview section
@@ -81,7 +83,9 @@ class DigestFormatter:
 
         # Statistics footer
         if self.include_stats:
-            stats = self._create_statistics(messages_by_channel, period_display)
+            stats = self._create_statistics(
+                messages_by_channel, period_display or (hours if hours is not None else 24)
+            )
             parts.append(stats)
 
         digest = "\n".join(parts)
@@ -89,7 +93,7 @@ class DigestFormatter:
         self.logger.info(f"Digest formatted: {len(digest)} characters")
         return digest
 
-    def _create_header(self, period_display: str) -> str:
+    def _create_header(self, period_display: str | int) -> str:
         """
         Create digest header.
 
@@ -117,7 +121,16 @@ class DigestFormatter:
 
         emoji = "📊" if self.use_emojis else ""
 
-        return f"# {emoji} Дайджест ({period_display}) - {date_str}\n"
+        if isinstance(period_display, int):
+            period_display_text = f"последние {period_display} часа"
+        else:
+            period_display_text = period_display
+
+        tz = self.config.settings.timezone
+        return (
+            f"# {emoji} Ежедневный дайджест - {date_str}\n"
+            f"*⏱️ Период: {period_display_text} ({tz})*\n"
+        )
 
     def _create_channel_section(
         self, channel_name: str, summary: str, messages: List[Message]
@@ -295,7 +308,7 @@ class DigestFormatter:
         return message
 
     def _create_statistics(
-        self, messages_by_channel: Dict[str, List[Message]], period_display: str
+        self, messages_by_channel: Dict[str, List[Message]], period_display: str | int
     ) -> str:
         """
         Create statistics footer.
@@ -310,10 +323,16 @@ class DigestFormatter:
         total_messages = sum(len(msgs) for msgs in messages_by_channel.values())
         active_channels = sum(1 for msgs in messages_by_channel.values() if msgs)
 
+        if isinstance(period_display, int):
+            period_display_text = f"{period_display} часа"
+        else:
+            period_display_text = period_display
+
+        tz = self.config.settings.timezone
         stats_parts = [
             "---\n",
             f"📈 **Статистика**: {active_channels} каналов, {total_messages} сообщений обработано",
-            f"⏱️ Период: {period_display}",
+            f"⏱️ Период: {period_display_text} ({tz})",
         ]
 
         return "\n".join(stats_parts)

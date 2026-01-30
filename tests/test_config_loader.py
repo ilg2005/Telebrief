@@ -17,9 +17,21 @@ def test_load_config_success(temp_config_file, mock_env_vars):
     assert config.channels[0].id == "@test_channel"
     assert config.channels[0].name == "Test Channel"
     assert config.settings.schedule_time == "08:00"
+    assert config.settings.enable_scheduler is True
     assert config.settings.target_user_id == 123456789
     assert config.telegram_api_id == 12345678
     assert config.openai_api_key == "sk-test-key"
+
+
+@pytest.mark.unit
+def test_load_config_runtime_override_enable_scheduler(tmp_path, temp_config_file, mock_env_vars, monkeypatch):
+    runtime_settings_file = tmp_path / "runtime_settings.json"
+    runtime_settings_file.write_text('{"enable_scheduler": false}', encoding="utf-8")
+
+    monkeypatch.setenv("TELEBRIEF_RUNTIME_SETTINGS_PATH", str(runtime_settings_file))
+
+    config = load_config(temp_config_file)
+    assert config.settings.enable_scheduler is False
 
 
 @pytest.mark.unit

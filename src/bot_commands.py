@@ -5,6 +5,7 @@ Bot command handlers for instant digest generation.
 import asyncio
 import logging
 import html
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -14,6 +15,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from src.config_loader import Config
 from src.core import generate_and_send_channel_digests, generate_history_digest
 from src.scheduler import DigestScheduler
+from src.runtime_settings import DEFAULT_RUNTIME_SETTINGS_PATH, load_runtime_settings, save_runtime_settings
 
 
 class BotCommandHandler:
@@ -50,6 +52,7 @@ class BotCommandHandler:
         self.app.add_handler(CommandHandler("history", self.handle_history))
         self.app.add_handler(CommandHandler("cleanup", self.handle_cleanup))
         self.app.add_handler(CommandHandler("remove", self.handle_remove))
+        self.app.add_handler(CommandHandler("autoschedule", self.handle_autoschedule))
         self.app.add_handler(CommandHandler("status", self.handle_status))
         self.app.add_handler(CommandHandler("help", self.handle_help))
         self.app.add_handler(CommandHandler("start", self.handle_help))
@@ -78,6 +81,7 @@ class BotCommandHandler:
             BotCommand("history", "Анализ истории канала"),
             BotCommand("remove", "Удалить канал из списка"),
             BotCommand("cleanup", "Удалить старые дайджесты"),
+            BotCommand("autoschedule", "Включить/выключить автодайджест"),
             BotCommand("status", "Показать статус и настройки"),
             BotCommand("help", "Показать справку"),
         ]
@@ -99,6 +103,72 @@ class BotCommandHandler:
             True if authorized
         """
         return user_id == self.config.settings.target_user_id
+
+    def _get_runtime_settings_path(self) -> str:
+        return os.getenv("TELEBRIEF_RUNTIME_SETTINGS_PATH", DEFAULT_RUNTIME_SETTINGS_PATH)
+
+    def _get_scheduler_enabled(self) -> bool:
+        if self.scheduler:
+            return self.scheduler.is_running
+        return False
+
+    def _set_scheduler_enabled(self, enabled: bool) -> None:
+        runtime_settings_path = self._get_runtime_settings_path()
+        runtime_settings = load_runtime_settings(runtime_settings_path)
+        runtime_settings["enable_scheduler"] = enabled
+        save_runtime_settings(runtime_settings, runtime_settings_path)
+
+        self.config.settings.enable_scheduler = enabled
+
+        if not self.scheduler:
+            return
+
+        if enabled:
+            self.scheduler.start()
+        else:
+            self.scheduler.stop()
+
+    def _build_status_message(self) -> tuple[str, InlineKeyboardMarkup]:
+        scheduler_enabled = self._get_scheduler_enabled()
+        scheduler_state = "Включен" if scheduler_enabled else "Выключен"
+
+        status_lines = [
+            "📊 **Статус Telebrief**\n",
+            f"🤖 Модель: {self.config.settings.openai_model}",
+            f"📺 Каналов настроено: {len(self.config.channels)}",
+            f"🧹 Автоочистка: {'Включена' if self.config.settings.auto_cleanup_old_digests else 'Выключена'}",
+            f"📅 Автодайджест: {scheduler_state}",
+        ]
+
+        if scheduler_enabled and self.scheduler:
+            next_run = self.scheduler.get_next_run_time()
+            status_lines.append(f"⏰ Следующий дайджест: {next_run}")
+
+        status_lines.extend(
+            [
+                "",
+                "**Доступные команды:**",
+                "/digest - Сгенерировать дайджест сейчас",
+                "/history - Анализ истории (меню выбора)",
+                "/remove - Удалить канал из списка (меню выбора)",
+                "/cleanup - Удалить предыдущие дайджесты",
+                "/autoschedule on|off - Автодайджест",
+                "/status - Показать этот статус",
+                "/help - Помощь",
+                "",
+                "💡 **Совет:**",
+                "- Чтобы добавить канал, просто перешлите мне из него любое сообщение.",
+                "- Чтобы удалить канал, используйте команду /remove.",
+            ]
+        )
+
+        if scheduler_enabled:
+            button = InlineKeyboardButton("🛑 Выключить автодайджест", callback_data="autoschedule:off")
+        else:
+            button = InlineKeyboardButton("▶️ Включить автодайджест", callback_data="autoschedule:on")
+        reply_markup = InlineKeyboardMarkup([[button]])
+
+        return "\n".join(status_lines), reply_markup
 
     async def handle_digest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -196,11 +266,26 @@ class BotCommandHandler:
             update: Telegram update
             context: Bot context
         """
+        assert update.effective_user is not None
+        if not self.is_authorized(update.effective_user.id):
+            return
+
         query = update.callback_query
         await query.answer()
 
         data = query.data
         if not data:
+            return
+
+        if data.startswith("autoschedule:"):
+            action = data.split(":", 1)[1]
+            if action == "on":
+                self._set_scheduler_enabled(True)
+            elif action == "off":
+                self._set_scheduler_enabled(False)
+
+            text, reply_markup = self._build_status_message()
+            await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
             return
 
         # Handle Add Channel actions
@@ -472,38 +557,42 @@ class BotCommandHandler:
             self.logger.warning(f"Unauthorized /status attempt from user {user_id}")
             return
 
-        # Gather status information
-        status_lines = [
-            "📊 **Статус Telebrief**\n",
-            f"🤖 Модель: {self.config.settings.openai_model}",
-            f"📺 Каналов настроено: {len(self.config.channels)}",
-            f"🧹 Автоочистка: {'Включена' if self.config.settings.auto_cleanup_old_digests else 'Выключена'}",
-        ]
+        text, reply_markup = self._build_status_message()
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
-        if self.scheduler:
-            next_run = self.scheduler.get_next_run_time()
-            status_lines.append(f"⏰ Следующий дайджест: {next_run}")
-        else:
-            status_lines.append("⏰ Планировщик не запущен")
+    async def handle_autoschedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
 
-        status_lines.extend(
-            [
-                "",
-                "**Доступные команды:**",
-                "/digest - Сгенерировать дайджест сейчас",
-                "/history - Анализ истории (меню выбора)",
-                "/remove - Удалить канал из списка (меню выбора)",
-                "/cleanup - Удалить предыдущие дайджесты",
-                "/status - Показать этот статус",
-                "/help - Помощь",
-                "",
-                "💡 **Совет:**",
-                "- Чтобы добавить канал, просто перешлите мне из него любое сообщение.",
-                "- Чтобы удалить канал, используйте команду /remove.",
-            ]
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        args = context.args
+        if not args:
+            current = "включен" if self._get_scheduler_enabled() else "выключен"
+            await update.message.reply_text(
+                f"📅 Автодайджест сейчас {current}.\n"
+                "Использование: /autoschedule on или /autoschedule off\n"
+                "Либо открой /status и нажми кнопку.",
+            )
+            return
+
+        action = args[0].strip().lower()
+        if action in {"on", "enable", "1", "true", "yes"}:
+            self._set_scheduler_enabled(True)
+            await update.message.reply_text("✅ Автодайджест включен.")
+            return
+
+        if action in {"off", "disable", "0", "false", "no"}:
+            self._set_scheduler_enabled(False)
+            await update.message.reply_text("✅ Автодайджест выключен. Дайджест останется доступен по /digest.")
+            return
+
+        await update.message.reply_text(
+            "❌ Не понял.\n"
+            "Использование: /autoschedule on или /autoschedule off",
         )
-
-        await update.message.reply_text("\n".join(status_lines), parse_mode="Markdown")
 
     async def handle_id_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -620,6 +709,13 @@ class BotCommandHandler:
         if not self.is_authorized(user_id):
             return
 
+        auto_enabled = self._get_scheduler_enabled()
+        auto_line = (
+            f"Дайджест генерируется автоматически каждый день в {self.config.settings.schedule_time} UTC"
+            if auto_enabled
+            else "Автодайджест сейчас выключен. Включить: /autoschedule on (или кнопкой в /status)"
+        )
+
         help_text = """
 🤖 **Telebrief - Telegram Digest Generator**
 
@@ -631,6 +727,7 @@ class BotCommandHandler:
 /history - Анализ истории канала (меню выбора)
 /remove - Удалить канал из списка (меню выбора)
 /cleanup - Удалить предыдущие дайджесты вручную
+/autoschedule - Включить/выключить автодайджест
 /status - Показать статус и настройки
 /help - Показать эту справку
 
@@ -639,7 +736,7 @@ class BotCommandHandler:
 • **Удалить:** Используйте команду /remove для выбора и удаления канала.
 
 **Автоматический режим:**
-Дайджест генерируется автоматически каждый день в {}
+{}
 
 **Возможности:**
 • Обработка каналов на любых языках
@@ -649,7 +746,7 @@ class BotCommandHandler:
 • Ссылки на оригинальные сообщения
 • Автоматическая очистка старых дайджестов (настраивается)
         """.format(
-            self.config.settings.schedule_time + " UTC"
+            auto_line
         )
 
         await update.message.reply_text(help_text, parse_mode="Markdown")

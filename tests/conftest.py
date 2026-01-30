@@ -29,6 +29,7 @@ def sample_config():
     settings = Settings(
         schedule_time="08:00",
         timezone="UTC",
+        enable_scheduler=True,
         lookback_hours=24,
         openai_model="gpt-5-nano",
         openai_temperature=0.7,
@@ -48,6 +49,7 @@ def sample_config():
         telegram_api_hash="test_hash",
         telegram_bot_token="123456789:ABC-DEF",
         openai_api_key="sk-test-key",
+        openai_base_url="https://openrouter.ai/api/v1",
         log_level="INFO",
     )
 

@@ -61,10 +61,14 @@ class DigestScheduler:
 
     def stop(self):
         """Stop the scheduler."""
-        if self.scheduler.running:
-            self.scheduler.shutdown()
-            self.is_running = False
-            self.logger.info("Scheduler stopped")
+        try:
+            if self.scheduler.running:
+                self.scheduler.shutdown()
+        except Exception as e:
+            self.logger.warning(f"Failed to shutdown scheduler cleanly: {e}")
+        self.scheduler = AsyncIOScheduler()
+        self.is_running = False
+        self.logger.info("Scheduler stopped")
 
     async def _scheduled_digest_job(self):
         """Scheduled job that runs daily."""

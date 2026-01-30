@@ -61,6 +61,8 @@ docker compose logs -f telebrief
 
 **Important**: You must create the Telegram session file BEFORE running Docker. The script uses Docker itself, so no additional dependencies needed.
 
+**Tip**: If you want to generate digests only on demand, disable auto mode in the bot: `/autoschedule off`.
+
 ---
 
 ## 🤖 Bot Commands
@@ -73,6 +75,7 @@ Open Telegram and message your bot:
 | `/help` | Display help message with all commands |
 | `/digest` | Generate and send digest for last 24 hours instantly |
 | `/status` | Show configuration, next scheduled run, and system info |
+| `/autoschedule on|off` | Enable/disable daily auto-digests |
 | `/cleanup` | Manually delete old digest messages |
 
 ---

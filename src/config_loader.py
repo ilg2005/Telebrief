@@ -10,6 +10,8 @@ from typing import List
 import yaml
 from dotenv import load_dotenv
 
+from src.runtime_settings import DEFAULT_RUNTIME_SETTINGS_PATH, load_runtime_settings
+
 
 @dataclass
 class ChannelConfig:
@@ -25,6 +27,7 @@ class Settings:
 
     schedule_time: str
     timezone: str
+    enable_scheduler: bool
     lookback_hours: int
     openai_model: str
     openai_temperature: float
@@ -51,6 +54,22 @@ class Config:
     openai_api_key: str
     openai_base_url: str
     log_level: str
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
 
 
 def load_config(config_path: str = "config.yaml") -> Config:
@@ -87,9 +106,17 @@ def load_config(config_path: str = "config.yaml") -> Config:
 
     # Parse settings
     settings_dict = yaml_config.get("settings", {})
+    runtime_settings_path = os.getenv(
+        "TELEBRIEF_RUNTIME_SETTINGS_PATH", DEFAULT_RUNTIME_SETTINGS_PATH
+    )
+    runtime_settings = load_runtime_settings(runtime_settings_path)
     settings = Settings(
         schedule_time=settings_dict.get("schedule_time", "08:00"),
         timezone=settings_dict.get("timezone", "UTC"),
+        enable_scheduler=_coerce_bool(
+            runtime_settings.get("enable_scheduler"),
+            _coerce_bool(settings_dict.get("enable_scheduler"), True),
+        ),
         lookback_hours=settings_dict.get("lookback_hours", 24),
         openai_model=settings_dict.get("openai_model", "gpt-5-nano"),
         openai_temperature=settings_dict.get("openai_temperature", 0.7),

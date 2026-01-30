@@ -45,7 +45,10 @@ class TelebriefApp:
             for ch in self.config.channels:
                 self.logger.info(f"  • {ch.name} ({ch.id})")
 
-            self.logger.info(f"Schedule: Daily at {self.config.settings.schedule_time} {self.config.settings.timezone}")
+            scheduler_state = "Enabled" if self.config.settings.enable_scheduler else "Disabled"
+            self.logger.info(
+                f"Schedule: {scheduler_state}, daily at {self.config.settings.schedule_time} {self.config.settings.timezone}"
+            )
             self.logger.info(f"Target user: {self.config.settings.target_user_id}")
             self.logger.info(f"OpenAI model: {self.config.settings.openai_model}")
 
@@ -85,9 +88,11 @@ class TelebriefApp:
 
     async def run(self):
         """Run the application."""
-        # Start scheduler
-        self.logger.info("Starting scheduler...")
-        self.scheduler.start()
+        if self.config.settings.enable_scheduler:
+            self.logger.info("Starting scheduler...")
+            self.scheduler.start()
+        else:
+            self.logger.info("Scheduler disabled by settings")
 
         # Start bot
         self.logger.info("Starting bot command handler...")
@@ -96,8 +101,11 @@ class TelebriefApp:
         self.logger.info("=" * 70)
         self.logger.info("✅ TELEBRIEF IS RUNNING")
         self.logger.info("=" * 70)
-        self.logger.info("Scheduler: Active")
-        self.logger.info(f"Next digest: {self.scheduler.get_next_run_time()}")
+        if self.scheduler and self.scheduler.is_running:
+            self.logger.info("Scheduler: Active")
+            self.logger.info(f"Next digest: {self.scheduler.get_next_run_time()}")
+        else:
+            self.logger.info("Scheduler: Disabled")
         self.logger.info("Bot commands: Active")
         self.logger.info("")
         self.logger.info("Available commands in Telegram:")
