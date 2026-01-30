@@ -36,8 +36,8 @@ Before you begin, you'll need:
    - Send `/newbot` to create a new bot
    - Save the bot token
 
-4. **OpenAI API Key** - [Get from platform.openai.com](https://platform.openai.com)
-   - Requires GPT-5-nano access
+4. **OpenAI-compatible API Key**
+   - Works with OpenRouter (recommended) or any OpenAI-compatible provider
 
 5. **Your Telegram User ID** - Get from [@userinfobot](https://t.me/userinfobot)
    - Send `/start` to get your ID
@@ -156,6 +156,8 @@ docker compose logs -f telebrief
 
 - The channel list is persisted in SQLite (`data/telebrief.db`), so `config.yaml` can be mounted read-only in Docker.
 - `/version` shows `TELEBRIEF_BUILD_ID` (set it in `.env` if you want to see the deployed revision).
+- `/chat` answers are based on the full chat context for the selected period, so large periods may take longer to answer.
+- “All time” is still bounded by `max_messages_per_channel` (safety limit) when collecting messages from Telegram.
 
 ---
 
@@ -183,6 +185,8 @@ Open Telegram and message your bot:
 - Run `/model` to see the current model and the default one
 - Run `/model <id>` to set a model ID copied from OpenRouter (e.g. `anthropic/claude-3.5-sonnet`)
 - Use the “Reset to default” button to revert back to the default model from config/env
+- Note: `/model` applies immediately (no bot restart needed).
+- Note: model override is persisted in `data/runtime_settings.json` and has higher priority than `OPENAI_MODEL`. Use “Reset to default” (or delete `openai_model` from the file) to return to env/default.
 
 **Chat citations (sources)**:
 - Chat answers include citations like `[2]` that refer to a specific message in the context.
