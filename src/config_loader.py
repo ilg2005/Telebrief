@@ -30,6 +30,7 @@ class Settings:
     enable_scheduler: bool
     lookback_hours: int
     openai_model: str
+    default_openai_model: str
     openai_temperature: float
     max_tokens_per_summary: int
     use_emojis: bool
@@ -110,6 +111,14 @@ def load_config(config_path: str = "config.yaml") -> Config:
         "TELEBRIEF_RUNTIME_SETTINGS_PATH", DEFAULT_RUNTIME_SETTINGS_PATH
     )
     runtime_settings = load_runtime_settings(runtime_settings_path)
+
+    openai_model_env = os.getenv("OPENAI_MODEL")
+    default_openai_model = openai_model_env or settings_dict.get("openai_model", "gpt-5-nano")
+    runtime_openai_model = runtime_settings.get("openai_model")
+    effective_openai_model = (
+        runtime_openai_model if isinstance(runtime_openai_model, str) and runtime_openai_model.strip() else default_openai_model
+    )
+
     settings = Settings(
         schedule_time=settings_dict.get("schedule_time", "08:00"),
         timezone=settings_dict.get("timezone", "UTC"),
@@ -118,7 +127,8 @@ def load_config(config_path: str = "config.yaml") -> Config:
             _coerce_bool(settings_dict.get("enable_scheduler"), True),
         ),
         lookback_hours=settings_dict.get("lookback_hours", 24),
-        openai_model=settings_dict.get("openai_model", "gpt-5-nano"),
+        openai_model=effective_openai_model,
+        default_openai_model=default_openai_model,
         openai_temperature=settings_dict.get("openai_temperature", 0.7),
         max_tokens_per_summary=settings_dict.get("max_tokens_per_summary", 500),
         use_emojis=settings_dict.get("use_emojis", True),
@@ -141,10 +151,6 @@ def load_config(config_path: str = "config.yaml") -> Config:
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     openai_api_key = os.getenv("OPENAI_API_KEY")
     openai_base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
-    openai_model_env = os.getenv("OPENAI_MODEL")
-
-    if openai_model_env:
-        settings.openai_model = openai_model_env
 
     log_level = os.getenv("LOG_LEVEL", "INFO")
 

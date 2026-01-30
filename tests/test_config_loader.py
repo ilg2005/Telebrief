@@ -35,6 +35,27 @@ def test_load_config_runtime_override_enable_scheduler(tmp_path, temp_config_fil
 
 
 @pytest.mark.unit
+def test_load_config_runtime_override_openai_model(tmp_path, temp_config_file, mock_env_vars, monkeypatch):
+    runtime_settings_file = tmp_path / "runtime_settings.json"
+    runtime_settings_file.write_text('{"openai_model": "anthropic/claude-3.5-sonnet"}', encoding="utf-8")
+
+    monkeypatch.setenv("TELEBRIEF_RUNTIME_SETTINGS_PATH", str(runtime_settings_file))
+
+    config = load_config(temp_config_file)
+    assert config.settings.openai_model == "anthropic/claude-3.5-sonnet"
+    assert config.settings.default_openai_model == "gpt-5-nano"
+
+
+@pytest.mark.unit
+def test_load_config_default_openai_model_from_env(tmp_path, temp_config_file, mock_env_vars, monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "google/gemini-2.0-flash-001")
+
+    config = load_config(temp_config_file)
+    assert config.settings.openai_model == "google/gemini-2.0-flash-001"
+    assert config.settings.default_openai_model == "google/gemini-2.0-flash-001"
+
+
+@pytest.mark.unit
 def test_load_config_missing_file():
     """Test error handling for missing config file."""
     with pytest.raises(FileNotFoundError):

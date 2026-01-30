@@ -18,9 +18,17 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("LOG_LEVEL", "INFO")
 
 
+@pytest.fixture(autouse=True)
+def isolate_runtime_settings_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEBRIEF_RUNTIME_SETTINGS_PATH", str(tmp_path / "runtime_settings.json"))
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    import src.config_loader as config_loader
+    monkeypatch.setattr(config_loader, "load_dotenv", lambda: None)
+
+
+
 @pytest.fixture
 def sample_config():
-    """Create a sample configuration for testing."""
     channels = [
         ChannelConfig(id="@test_channel", name="Test Channel"),
         ChannelConfig(id="-1001234567890", name="Private Group"),
@@ -32,6 +40,7 @@ def sample_config():
         enable_scheduler=True,
         lookback_hours=24,
         openai_model="gpt-5-nano",
+        default_openai_model="gpt-5-nano",
         openai_temperature=0.7,
         max_tokens_per_summary=500,
         use_emojis=True,

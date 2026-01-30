@@ -75,8 +75,14 @@ Open Telegram and message your bot:
 | `/help` | Display help message with all commands |
 | `/digest` | Generate and send digest for last 24 hours instantly |
 | `/status` | Show configuration, next scheduled run, and system info |
+| `/model` | Show or set the OpenRouter model for generation |
 | `/autoschedule on|off` | Enable/disable daily auto-digests |
 | `/cleanup` | Manually delete old digest messages |
+
+**Model selection**:
+- Run `/model` to see the current model and the default one
+- Run `/model <id>` to set a model ID copied from OpenRouter (e.g. `anthropic/claude-3.5-sonnet`)
+- Use the “Reset to default” button to revert back to the default model from config/env
 
 ---
 

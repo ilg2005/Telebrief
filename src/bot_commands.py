@@ -53,6 +53,7 @@ class BotCommandHandler:
         self.app.add_handler(CommandHandler("cleanup", self.handle_cleanup))
         self.app.add_handler(CommandHandler("remove", self.handle_remove))
         self.app.add_handler(CommandHandler("autoschedule", self.handle_autoschedule))
+        self.app.add_handler(CommandHandler("model", self.handle_model))
         self.app.add_handler(CommandHandler("status", self.handle_status))
         self.app.add_handler(CommandHandler("help", self.handle_help))
         self.app.add_handler(CommandHandler("start", self.handle_help))
@@ -82,6 +83,7 @@ class BotCommandHandler:
             BotCommand("remove", "Удалить канал из списка"),
             BotCommand("cleanup", "Удалить старые дайджесты"),
             BotCommand("autoschedule", "Включить/выключить автодайджест"),
+            BotCommand("model", "Установить модель генерации"),
             BotCommand("status", "Показать статус и настройки"),
             BotCommand("help", "Показать справку"),
         ]
@@ -128,13 +130,57 @@ class BotCommandHandler:
         else:
             self.scheduler.stop()
 
+    def _set_openai_model(self, model_id: str) -> None:
+        runtime_settings_path = self._get_runtime_settings_path()
+        runtime_settings = load_runtime_settings(runtime_settings_path)
+        runtime_settings["openai_model"] = model_id
+        save_runtime_settings(runtime_settings, runtime_settings_path)
+        self.config.settings.openai_model = model_id
+
+    def _reset_openai_model(self) -> None:
+        runtime_settings_path = self._get_runtime_settings_path()
+        runtime_settings = load_runtime_settings(runtime_settings_path)
+        runtime_settings.pop("openai_model", None)
+        save_runtime_settings(runtime_settings, runtime_settings_path)
+        self.config.settings.openai_model = self.config.settings.default_openai_model
+
+    def _build_model_message(self) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+        current_model = self.config.settings.openai_model
+        default_model = self.config.settings.default_openai_model
+        is_overridden = current_model != default_model
+
+        lines = [
+            "🤖 **Модель генерации**",
+            f"Текущая: `{current_model}`",
+            f"По умолчанию: `{default_model}`",
+            "",
+            "Сменить модель: /model <id>",
+            "Пример: /model anthropic/claude-3.5-sonnet",
+        ]
+
+        reply_markup: Optional[InlineKeyboardMarkup] = None
+        if is_overridden:
+            reply_markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("♻️ Сбросить на дефолт", callback_data="model:reset:model")]]
+            )
+
+        return "\n".join(lines), reply_markup
+
     def _build_status_message(self) -> tuple[str, InlineKeyboardMarkup]:
         scheduler_enabled = self._get_scheduler_enabled()
         scheduler_state = "Включен" if scheduler_enabled else "Выключен"
 
+        current_model = self.config.settings.openai_model
+        default_model = self.config.settings.default_openai_model
+        model_line = (
+            f"🤖 Модель: {current_model}"
+            if current_model == default_model
+            else f"🤖 Модель: {current_model} (дефолт: {default_model})"
+        )
+
         status_lines = [
             "📊 **Статус Telebrief**\n",
-            f"🤖 Модель: {self.config.settings.openai_model}",
+            model_line,
             f"📺 Каналов настроено: {len(self.config.channels)}",
             f"🧹 Автоочистка: {'Включена' if self.config.settings.auto_cleanup_old_digests else 'Выключена'}",
             f"📅 Автодайджест: {scheduler_state}",
@@ -162,11 +208,18 @@ class BotCommandHandler:
             ]
         )
 
+        buttons = []
         if scheduler_enabled:
-            button = InlineKeyboardButton("🛑 Выключить автодайджест", callback_data="autoschedule:off")
+            buttons.append([InlineKeyboardButton("🛑 Выключить автодайджест", callback_data="autoschedule:off")])
         else:
-            button = InlineKeyboardButton("▶️ Включить автодайджест", callback_data="autoschedule:on")
-        reply_markup = InlineKeyboardMarkup([[button]])
+            buttons.append([InlineKeyboardButton("▶️ Включить автодайджест", callback_data="autoschedule:on")])
+
+        if current_model != default_model:
+            buttons.append(
+                [InlineKeyboardButton("♻️ Сбросить модель на дефолт", callback_data="model:reset:status")]
+            )
+
+        reply_markup = InlineKeyboardMarkup(buttons)
 
         return "\n".join(status_lines), reply_markup
 
@@ -275,6 +328,23 @@ class BotCommandHandler:
 
         data = query.data
         if not data:
+            return
+
+        if data.startswith("model:reset:"):
+            target = data.split(":", 2)[2]
+            self._reset_openai_model()
+
+            if target == "status":
+                text, reply_markup = self._build_status_message()
+                await query.edit_message_text(
+                    text=text, parse_mode="Markdown", reply_markup=reply_markup
+                )
+                return
+
+            text, reply_markup = self._build_model_message()
+            await query.edit_message_text(
+                text=text, parse_mode="Markdown", reply_markup=reply_markup
+            )
             return
 
         if data.startswith("autoschedule:"):
@@ -594,6 +664,29 @@ class BotCommandHandler:
             "Использование: /autoschedule on или /autoschedule off",
         )
 
+    async def handle_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        assert update.effective_user is not None
+        assert update.message is not None
+
+        user_id = update.effective_user.id
+        if not self.is_authorized(user_id):
+            return
+
+        args = context.args
+        if not args:
+            text, reply_markup = self._build_model_message()
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+            return
+
+        model_id = " ".join(args).strip()
+        if not model_id:
+            text, reply_markup = self._build_model_message()
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+            return
+
+        self._set_openai_model(model_id)
+        await update.message.reply_text(f"✅ Ок, использую модель: `{model_id}`", parse_mode="Markdown")
+
     async def handle_id_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Handle forwarded messages to display source ID.
@@ -728,6 +821,7 @@ class BotCommandHandler:
 /remove - Удалить канал из списка (меню выбора)
 /cleanup - Удалить предыдущие дайджесты вручную
 /autoschedule - Включить/выключить автодайджест
+/model - Показать/изменить модель генерации
 /status - Показать статус и настройки
 /help - Показать эту справку
 
