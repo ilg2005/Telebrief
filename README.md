@@ -228,6 +228,8 @@ Open Telegram and message your bot:
 
 ## 🛠️ Development & Testing
 
+Developer documentation (RU): [DEVELOPER_GUIDE_RU.md](DEVELOPER_GUIDE_RU.md)
+
 ### Running Tests
 
 ```bash

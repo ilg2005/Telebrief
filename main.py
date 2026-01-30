@@ -73,7 +73,7 @@ class TelebriefApp:
             print("\nPlease ensure:")
             print("1. config.yaml exists and is properly configured")
             print("2. .env file exists with required API credentials")
-            print("\nSee .env.example and SPECIFICATION.md for details.")
+            print("\nSee README.md, .env.example and config.yaml.example for details.")
             return False
 
         except ValueError as e:
