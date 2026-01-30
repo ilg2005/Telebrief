@@ -276,9 +276,7 @@ async def generate_history_digest(
             await collector.disconnect()
 
         total_messages = sum(len(msgs) for msgs in messages_by_channel.values())
-        logger.info(
-            f"Collected {total_messages} messages from {len(messages_by_channel)} channels"
-        )
+        logger.info(f"Collected {total_messages} messages from {len(messages_by_channel)} channels")
 
         if total_messages == 0:
             logger.warning("No messages collected, skipping digest generation")
@@ -332,13 +330,13 @@ async def generate_history_digest(
         # Step 4: Send channel messages (without cleanup of daily digests)
         logger.info(f"STEP 4: Sending {len(channel_messages)} channel messages")
         sender = DigestSender(config, logger)
-        
+
         summary_message = formatter.format_summary_message(
             total_channels=len(channel_messages),
             total_messages=total_messages,
             period_display=period_display,
         )
-        
+
         # We don't use send_channel_messages_with_tracking because that saves message IDs for cleanup
         # For history, we probably just want to send them and NOT mark them for daily cleanup.
         # But maybe we want to be able to cleanup history digests too?
@@ -348,7 +346,7 @@ async def generate_history_digest(
         # But the user might want to clean up manually later.
         # Let's just use the same method, it's fine if they get mixed or we can add a flag to not save IDs.
         # The prompt didn't specify cleanup behavior for history. I'll stick to standard behavior.
-        
+
         success = await sender.send_channel_messages_with_tracking(
             channel_messages, summary_message, user_id
         )

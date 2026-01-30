@@ -5,7 +5,7 @@ AI-powered summarizer using OpenAI API with Russian output.
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from openai import AsyncOpenAI
 
@@ -115,7 +115,10 @@ class Summarizer:
         self.max_tokens = config.settings.max_tokens_per_summary
 
     async def summarize_all(
-        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False, is_full_history: bool = False
+        self,
+        messages_by_channel: Dict[str, List[Message]],
+        use_history_prompt: bool = False,
+        is_full_history: bool = False,
     ) -> Dict[str, Any]:
         """
         Generate complete digest with per-channel summaries.
@@ -146,7 +149,10 @@ class Summarizer:
         return {"channel_summaries": channel_summaries, "overview": ""}
 
     async def _summarize_per_channel(
-        self, messages_by_channel: Dict[str, List[Message]], use_history_prompt: bool = False, is_full_history: bool = False
+        self,
+        messages_by_channel: Dict[str, List[Message]],
+        use_history_prompt: bool = False,
+        is_full_history: bool = False,
     ) -> Dict[str, str]:
         """
         Generate summary for each channel.
@@ -163,7 +169,9 @@ class Summarizer:
 
         for channel_name, messages in messages_by_channel.items():
             try:
-                summary = await self._summarize_channel(channel_name, messages, use_history_prompt, is_full_history)
+                summary = await self._summarize_channel(
+                    channel_name, messages, use_history_prompt, is_full_history
+                )
                 summaries[channel_name] = summary
                 self.logger.info(f"✓ Summarized {channel_name}")
             except Exception as e:
@@ -173,7 +181,11 @@ class Summarizer:
         return summaries
 
     async def _summarize_channel(
-        self, channel_name: str, messages: List[Message], use_history_prompt: bool = False, is_full_history: bool = False
+        self,
+        channel_name: str,
+        messages: List[Message],
+        use_history_prompt: bool = False,
+        is_full_history: bool = False,
     ) -> str:
         """
         Generate summary for a single channel.
@@ -189,7 +201,7 @@ class Summarizer:
         """
         if use_history_prompt:
             return await self._summarize_channel_history(channel_name, messages, is_full_history)
-        
+
         # Standard daily digest logic
         # Format messages for prompt
         messages_text = self._format_messages_for_prompt(messages)
@@ -226,7 +238,9 @@ class Summarizer:
 
         return await self._call_openai(prompt, SYSTEM_PROMPT)
 
-    async def _summarize_channel_history(self, channel_name: str, messages: List[Message], is_full_history: bool = False) -> str:
+    async def _summarize_channel_history(
+        self, channel_name: str, messages: List[Message], is_full_history: bool = False
+    ) -> str:
         """
         Generate history analysis for a channel, potentially using batching.
         """
@@ -235,13 +249,13 @@ class Summarizer:
         avg_freq_str = "Неизвестно"
         first_date_str = ""
         channel_age_str = ""
-        
+
         if total_msgs > 0:
             # Sort messages by timestamp just in case
             sorted_msgs = sorted(messages, key=lambda m: m.timestamp)
             start_time = sorted_msgs[0].timestamp
             end_time = sorted_msgs[-1].timestamp
-            
+
             # Frequency calculation (always useful)
             duration = end_time - start_time
             if total_msgs > 1 and duration.total_seconds() > 0:
@@ -249,59 +263,58 @@ class Summarizer:
                 if avg_seconds < 60:
                     avg_freq_str = f"~{int(avg_seconds)} сек"
                 elif avg_seconds < 3600:
-                    avg_freq_str = f"~{int(avg_seconds/60)} мин"
+                    avg_freq_str = f"~{int(avg_seconds / 60)} мин"
                 elif avg_seconds < 86400:
-                    avg_freq_str = f"~{int(avg_seconds/3600)} ч"
+                    avg_freq_str = f"~{int(avg_seconds / 3600)} ч"
                 else:
-                    avg_freq_str = f"~{int(avg_seconds/86400)} дн"
+                    avg_freq_str = f"~{int(avg_seconds / 86400)} дн"
 
             # Calculate Age and First Date ONLY if full history is requested
             if is_full_history:
                 # First publication date
                 first_date_str = start_time.strftime("%d.%m.%Y")
-                
+
                 # Channel age calculation
                 # Ensure timestamps are timezone-aware (UTC)
                 if start_time.tzinfo is None:
                     start_time = start_time.replace(tzinfo=timezone.utc)
-                
+
                 if end_time.tzinfo is None:
                     end_time = end_time.replace(tzinfo=timezone.utc)
 
                 now = datetime.now(timezone.utc)
-                
+
                 # If end_time is close to now (e.g. within 24h), use now for age calculation
                 # Otherwise use end_time (maybe channel is abandoned?)
                 # Usually for "age" we want time since creation until now.
                 age_duration = now - start_time
-                
+
                 years = age_duration.days // 365
                 remaining_days = age_duration.days % 365
                 months = remaining_days // 30
-                
+
                 age_parts = []
                 if years > 0:
                     age_parts.append(f"{years} г.")
                 if months > 0:
                     age_parts.append(f"{months} мес.")
-                
+
                 if not age_parts:
                     age_parts.append("менее 1 мес.")
-                    
+
                 channel_age_str = " ".join(age_parts)
 
         # Construct stats string based on context
         stats_info = f"Всего сообщений: {total_msgs}\n"
         if is_full_history:
             stats_info += (
-                f"Первая публикация: {first_date_str}\n"
-                f"Возраст канала: {channel_age_str}\n"
+                f"Первая публикация: {first_date_str}\n" f"Возраст канала: {channel_age_str}\n"
             )
         stats_info += f"Средняя периодичность: {avg_freq_str}"
 
         # Batching logic
         BATCH_SIZE = 50
-        
+
         if total_msgs <= BATCH_SIZE:
             messages_text = self._format_messages_for_prompt(messages)
             content_to_analyze = messages_text
@@ -309,9 +322,11 @@ class Summarizer:
             # Split into batches and summarize each
             chunks = [messages[i : i + BATCH_SIZE] for i in range(0, total_msgs, BATCH_SIZE)]
             chunk_summaries = []
-            
-            self.logger.info(f"Splitting {total_msgs} messages into {len(chunks)} chunks for {channel_name}")
-            
+
+            self.logger.info(
+                f"Splitting {total_msgs} messages into {len(chunks)} chunks for {channel_name}"
+            )
+
             for i, chunk in enumerate(chunks, 1):
                 chunk_text = self._format_messages_for_prompt(chunk)
                 chunk_prompt = f"""
@@ -324,12 +339,14 @@ class Summarizer:
 """
                 try:
                     # Use a simpler system prompt for chunks
-                    chunk_summary = await self._call_openai(chunk_prompt, "Ты — аналитик данных. Выдели главное.")
+                    chunk_summary = await self._call_openai(
+                        chunk_prompt, "Ты — аналитик данных. Выдели главное."
+                    )
                     chunk_summaries.append(chunk_summary)
                     self.logger.debug(f"Summarized chunk {i}/{len(chunks)}")
                 except Exception as e:
                     self.logger.error(f"Error summarizing chunk {i}: {e}")
-            
+
             content_to_analyze = "\n\n".join(chunk_summaries)
 
         # Final Prompt

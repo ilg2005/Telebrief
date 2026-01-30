@@ -3,24 +3,35 @@ Bot command handlers for instant digest generation.
 """
 
 import asyncio
-import logging
 import html
+import logging
 import os
 import re
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Optional
-from collections import OrderedDict
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from src.chat_storage import ChatStorage
 from src.chat_answerer import ChatAnswerer, LLMResponseError
+from src.chat_storage import ChatStorage
 from src.collector import MessageCollector
 from src.config_loader import Config
 from src.core import generate_and_send_channel_digests, generate_history_digest
+from src.runtime_settings import (
+    DEFAULT_RUNTIME_SETTINGS_PATH,
+    load_runtime_settings,
+    save_runtime_settings,
+)
 from src.scheduler import DigestScheduler
-from src.runtime_settings import DEFAULT_RUNTIME_SETTINGS_PATH, load_runtime_settings, save_runtime_settings
 
 
 class BotCommandHandler:
@@ -88,9 +99,7 @@ class BotCommandHandler:
         # Add message handler for forwarded messages (ID checker)
         self.app.add_handler(MessageHandler(filters.FORWARDED, self.handle_id_check))
 
-        self.app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text)
-        )
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
 
         self.logger.info("Bot command handlers registered")
         return self.app
@@ -250,13 +259,25 @@ class BotCommandHandler:
 
         buttons = []
         if scheduler_enabled:
-            buttons.append([InlineKeyboardButton("🛑 Выключить автодайджест", callback_data="autoschedule:off")])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        "🛑 Выключить автодайджест", callback_data="autoschedule:off"
+                    )
+                ]
+            )
         else:
-            buttons.append([InlineKeyboardButton("▶️ Включить автодайджест", callback_data="autoschedule:on")])
+            buttons.append(
+                [InlineKeyboardButton("▶️ Включить автодайджест", callback_data="autoschedule:on")]
+            )
 
         if current_model != default_model:
             buttons.append(
-                [InlineKeyboardButton("♻️ Сбросить модель на дефолт", callback_data="model:reset:status")]
+                [
+                    InlineKeyboardButton(
+                        "♻️ Сбросить модель на дефолт", callback_data="model:reset:status"
+                    )
+                ]
             )
 
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -433,10 +454,14 @@ class BotCommandHandler:
         try:
             channel_id = int(str(session["channel_id"]))
         except ValueError:
-            await update.message.reply_text("❌ Не смог распарсить channel_id. Запусти /chat заново.")
+            await update.message.reply_text(
+                "❌ Не смог распарсить channel_id. Запусти /chat заново."
+            )
             return
 
-        start_date = datetime.fromisoformat(session["start_date"]) if session.get("start_date") else None
+        start_date = (
+            datetime.fromisoformat(session["start_date"]) if session.get("start_date") else None
+        )
         end_date = datetime.fromisoformat(session["end_date"]) if session.get("end_date") else None
         await self._build_chat_corpus(
             user_id=user_id,
@@ -484,7 +509,9 @@ class BotCommandHandler:
         keyboard.append([InlineKeyboardButton("Отмена", callback_data=f"{prefix}_period:cancel")])
         return InlineKeyboardMarkup(keyboard)
 
-    def _resolve_period(self, period_arg: Optional[str]) -> tuple[Optional[datetime], Optional[datetime], str]:
+    def _resolve_period(
+        self, period_arg: Optional[str]
+    ) -> tuple[Optional[datetime], Optional[datetime], str]:
         start_date: Optional[datetime] = None
         end_date: Optional[datetime] = None
         period_display = "За все время"
@@ -531,17 +558,19 @@ class BotCommandHandler:
                 sources[idx] = link
 
         if sources:
-            sources_block = "\n".join(f"- [{idx}] {link}" for idx, link in list(sources.items())[:8])
+            sources_block = "\n".join(
+                f"- [{idx}] {link}" for idx, link in list(sources.items())[:8]
+            )
             if "источники" in answer.lower():
                 answer = re.sub(r"(?is)\n+источники\s*:\s*.*$", "", answer).strip()
             return f"{answer}\n\nИсточники:\n{sources_block}"
 
         unique_links = []
-        for l in links:
-            if l not in unique_links:
-                unique_links.append(l)
+        for link in links:
+            if link not in unique_links:
+                unique_links.append(link)
         if unique_links and "источники" not in answer.lower():
-            sources_block = "\n".join(f"- {l}" for l in unique_links[:3])
+            sources_block = "\n".join(f"- {link}" for link in unique_links[:3])
             return f"{answer}\n\nИсточники (возможные):\n{sources_block}"
 
         return answer
@@ -597,13 +626,13 @@ class BotCommandHandler:
                 final_html = f"{body_html}\n\n<b>Источники:</b>\n{sources_lines}"
             else:
                 unique_links = []
-                for l in links:
-                    if l not in unique_links:
-                        unique_links.append(l)
+                for link in links:
+                    if link not in unique_links:
+                        unique_links.append(link)
                 if unique_links:
                     sources_lines = "\n".join(
-                        f'- <a href="{html.escape(l, quote=True)}">{html.escape(l)}</a>'
-                        for l in unique_links[:3]
+                        f'- <a href="{html.escape(link, quote=True)}">{html.escape(link)}</a>'
+                        for link in unique_links[:3]
                     )
                     final_html = f"{body_html}\n\n<b>Источники (возможные):</b>\n{sources_lines}"
                 else:
@@ -617,7 +646,7 @@ class BotCommandHandler:
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Handle callback queries from inline keyboards.
-        
+
         Args:
             update: Telegram update
             context: Bot context
@@ -645,9 +674,7 @@ class BotCommandHandler:
                 return
 
             text, reply_markup = self._build_model_message()
-            await query.edit_message_text(
-                text=text, parse_mode="HTML", reply_markup=reply_markup
-            )
+            await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=reply_markup)
             return
 
         if data.startswith("autoschedule:"):
@@ -673,8 +700,7 @@ class BotCommandHandler:
             if action == "custom":
                 context.user_data["awaiting_history_days"] = True
                 await query.edit_message_text(
-                    "✍️ Введите количество дней для анализа (например: 7).\n"
-                    "Можно от 1 до 3650.",
+                    "✍️ Введите количество дней для анализа (например: 7).\n" "Можно от 1 до 3650.",
                 )
                 return
 
@@ -714,8 +740,7 @@ class BotCommandHandler:
             if action == "custom":
                 context.user_data["awaiting_chat_days"] = True
                 await query.edit_message_text(
-                    "✍️ Введите количество дней для чата (например: 7).\n"
-                    "Можно от 1 до 3650.",
+                    "✍️ Введите количество дней для чата (например: 7).\n" "Можно от 1 до 3650.",
                 )
                 return
 
@@ -745,35 +770,38 @@ class BotCommandHandler:
         # Handle Add Channel actions
         if data.startswith("add_channel:"):
             action = data.split(":")[1]
-            
+
             if action == "cancel":
                 await query.edit_message_reply_markup(reply_markup=None)
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="❌ Добавление канала отменено."
+                    chat_id=update.effective_chat.id, text="❌ Добавление канала отменено."
                 )
                 if "pending_channel" in context.user_data:
                     del context.user_data["pending_channel"]
                 return
-            
+
             elif action == "confirm":
                 if "pending_channel" not in context.user_data:
-                    await query.edit_message_text("⚠️ Ошибка: данные устарели. Перешлите сообщение снова.")
+                    await query.edit_message_text(
+                        "⚠️ Ошибка: данные устарели. Перешлите сообщение снова."
+                    )
                     return
-                
+
                 channel_info = context.user_data["pending_channel"]
                 channel_id = str(channel_info["id"])
                 channel_name = channel_info["name"]
-                
+
                 from src.config_loader import ChannelConfig
 
                 success = self.chat_storage.add_channel(channel_id, channel_name)
-                
+
                 if success:
                     existing_ids = {str(ch.id) for ch in self.config.channels}
                     if str(channel_id) not in existing_ids:
-                        self.config.channels.append(ChannelConfig(id=str(channel_id), name=channel_name))
-                    
+                        self.config.channels.append(
+                            ChannelConfig(id=str(channel_id), name=channel_name)
+                        )
+
                     await query.edit_message_reply_markup(reply_markup=None)
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
@@ -786,7 +814,7 @@ class BotCommandHandler:
                     )
                 else:
                     await query.edit_message_text("❌ Ошибка при записи в файл конфигурации.")
-                
+
                 # Cleanup
                 del context.user_data["pending_channel"]
                 return
@@ -800,17 +828,19 @@ class BotCommandHandler:
                     if str(ch.id) == str(channel_id):
                         channel_name = ch.name
                         break
-                
+
                 keyboard = [
                     [
-                        InlineKeyboardButton("✅ Да, удалить", callback_data=f"remove_confirm:{channel_id}"),
-                        InlineKeyboardButton("❌ Отмена", callback_data="remove_cancel")
+                        InlineKeyboardButton(
+                            "✅ Да, удалить", callback_data=f"remove_confirm:{channel_id}"
+                        ),
+                        InlineKeyboardButton("❌ Отмена", callback_data="remove_cancel"),
                     ]
                 ]
                 await query.edit_message_text(
                     f"⚠️ Вы уверены, что хотите удалить канал <b>{html.escape(channel_name)}</b>?",
                     reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
                 return
             except Exception:
@@ -822,14 +852,18 @@ class BotCommandHandler:
                 channel_id = data.split(":")[1]
 
                 success = self.chat_storage.remove_channel(channel_id)
-                
+
                 if success:
                     # Remove from runtime config
-                    self.config.channels = [ch for ch in self.config.channels if str(ch.id) != str(channel_id)]
-                    
+                    self.config.channels = [
+                        ch for ch in self.config.channels if str(ch.id) != str(channel_id)
+                    ]
+
                     await query.edit_message_text("✅ Канал успешно удален из настроек.")
                 else:
-                    await query.edit_message_text("❌ Не удалось удалить канал из файла конфигурации.")
+                    await query.edit_message_text(
+                        "❌ Не удалось удалить канал из файла конфигурации."
+                    )
                 return
             except Exception:
                 await query.edit_message_text("❌ Ошибка удаления.")
@@ -994,7 +1028,9 @@ class BotCommandHandler:
             try:
                 days = int(text)
             except ValueError:
-                await update.message.reply_text("❌ Введите целое число от 1 до 3650 (или «отмена»).")
+                await update.message.reply_text(
+                    "❌ Введите целое число от 1 до 3650 (или «отмена»)."
+                )
                 return
 
             if days < 1 or days > 3650:
@@ -1020,7 +1056,9 @@ class BotCommandHandler:
             try:
                 days = int(text)
             except ValueError:
-                await update.message.reply_text("❌ Введите целое число от 1 до 3650 (или «отмена»).")
+                await update.message.reply_text(
+                    "❌ Введите целое число от 1 до 3650 (или «отмена»)."
+                )
                 return
 
             if days < 1 or days > 3650:
@@ -1116,14 +1154,13 @@ class BotCommandHandler:
             channel_name = session.get("channel_name") if session else None
 
             corpus_messages = []
-            for batch in self.chat_storage.iter_corpus_messages(session_id=session_id, batch_size=200, order="asc"):
+            for batch in self.chat_storage.iter_corpus_messages(
+                session_id=session_id, batch_size=200, order="asc"
+            ):
                 corpus_messages.extend(batch)
 
             if not corpus_messages:
-                answer = (
-                    "Контекст для этого чата пустой.\n"
-                    "Пересобери контекст: /chat_reset"
-                )
+                answer = "Контекст для этого чата пустой.\n" "Пересобери контекст: /chat_reset"
                 self.chat_storage.append_turn(session_id, "user", question)
                 self.chat_storage.append_turn(session_id, "assistant", answer)
                 await processing_message.edit_text(
@@ -1148,8 +1185,12 @@ class BotCommandHandler:
                 progress_callback=on_progress,
             )
 
-            answer_plain = self._apply_citation_sources(answer=answer, index_to_link=index_to_link, links=links)
-            answer_html = self._apply_citation_sources_html(answer=answer, index_to_link=index_to_link, links=links)
+            answer_plain = self._apply_citation_sources(
+                answer=answer, index_to_link=index_to_link, links=links
+            )
+            answer_html = self._apply_citation_sources_html(
+                answer=answer, index_to_link=index_to_link, links=links
+            )
             if len(answer_plain) > 3800:
                 answer_plain = answer_plain[:3797] + "…"
 
@@ -1166,7 +1207,9 @@ class BotCommandHandler:
             )
         except Exception as e:
             self.logger.error(f"Chat answer failed: {e}", exc_info=True)
-            await processing_message.edit_text("❌ Ошибка при формировании ответа. Попробуй ещё раз.")
+            await processing_message.edit_text(
+                "❌ Ошибка при формировании ответа. Попробуй ещё раз."
+            )
 
     async def handle_cleanup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -1217,7 +1260,7 @@ class BotCommandHandler:
         assert update.message is not None
 
         user_id = update.effective_user.id
-        
+
         if not self.is_authorized(user_id):
             return
 
@@ -1237,13 +1280,13 @@ class BotCommandHandler:
         await update.message.reply_text(
             "🗑️ <b>Удаление канала</b>\nВыберите канал, который хотите удалить:",
             reply_markup=reply_markup,
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Handle /status command.
-        
+
         Args:
             update: Telegram update
             context: Bot context
@@ -1298,12 +1341,13 @@ class BotCommandHandler:
 
         if action in {"off", "disable", "0", "false", "no"}:
             self._set_scheduler_enabled(False)
-            await update.message.reply_text("✅ Автодайджест выключен. Дайджест останется доступен по /digest.")
+            await update.message.reply_text(
+                "✅ Автодайджест выключен. Дайджест останется доступен по /digest."
+            )
             return
 
         await update.message.reply_text(
-            "❌ Не понял.\n"
-            "Использование: /autoschedule on или /autoschedule off",
+            "❌ Не понял.\n" "Использование: /autoschedule on или /autoschedule off",
         )
 
     async def handle_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1340,30 +1384,30 @@ class BotCommandHandler:
         assert update.message is not None
 
         user_id = update.effective_user.id
-        
+
         # Security check (optional, but good practice to keep bot private)
         if not self.is_authorized(user_id):
             return
 
         msg = update.message
-        
+
         # Support for python-telegram-bot v20+ (forward_origin)
-        if hasattr(msg, 'forward_origin') and msg.forward_origin:
+        if hasattr(msg, "forward_origin") and msg.forward_origin:
             origin = msg.forward_origin
-            
-            if origin.type in ['channel', 'chat']:
+
+            if origin.type in ["channel", "chat"]:
                 chat = origin.chat
                 chat_title = html.escape(chat.title)
                 chat_id = chat.id
                 username = chat.username
-                
+
                 # Check if already configured
                 is_configured = False
                 for ch in self.config.channels:
                     if ch.id == str(chat_id) or ch.id == chat_id:
                         is_configured = True
                         break
-                
+
                 response = (
                     f"🆔 <b>Информация о канале/чате</b>\n\n"
                     f"📝 Название: {chat_title}\n"
@@ -1371,41 +1415,40 @@ class BotCommandHandler:
                 )
                 if username:
                     response += f"🔗 Username: @{username}\n"
-                
+
                 if is_configured:
                     response += "\n✅ <b>Этот канал уже добавлен в настройки.</b>"
                     await msg.reply_text(response, parse_mode="HTML")
                 else:
                     response += "\n❓ <b>Добавить этот канал в список для дайджестов?</b>"
-                    
+
                     # Store pending channel info (unescaped title for config)
-                    context.user_data["pending_channel"] = {
-                        "id": chat_id,
-                        "name": chat.title
-                    }
-                    
+                    context.user_data["pending_channel"] = {"id": chat_id, "name": chat.title}
+
                     keyboard = [
                         [
-                            InlineKeyboardButton("✅ Добавить", callback_data="add_channel:confirm"),
-                            InlineKeyboardButton("❌ Отмена", callback_data="add_channel:cancel")
+                            InlineKeyboardButton(
+                                "✅ Добавить", callback_data="add_channel:confirm"
+                            ),
+                            InlineKeyboardButton("❌ Отмена", callback_data="add_channel:cancel"),
                         ]
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
-                    
+
                     await msg.reply_text(response, reply_markup=reply_markup, parse_mode="HTML")
-                
+
                 return
 
-            elif origin.type == 'user':
+            elif origin.type == "user":
                 user = origin.sender_user
                 user_title = user.first_name
                 if user.last_name:
                     user_title += f" {user.last_name}"
-                
+
                 user_title = html.escape(user_title)
                 user_id_src = user.id
                 username = user.username
-                
+
                 response = (
                     f"👤 <b>Информация о пользователе</b>\n\n"
                     f"📝 Имя: {user_title}\n"
@@ -1413,21 +1456,26 @@ class BotCommandHandler:
                 )
                 if username:
                     response += f"🔗 Username: @{username}\n"
-                    
+
                 await msg.reply_text(response, parse_mode="HTML")
                 return
-            
-            elif origin.type == 'hidden_user':
-                 sender_name = html.escape(origin.sender_user_name) if origin.sender_user_name else "Unknown"
-                 await msg.reply_text(
-                     f"👤 <b>Скрытый пользователь</b>\n"
-                     f"Имя: {sender_name}\n"
-                     "ID скрыт настройками приватности."
-                 , parse_mode="HTML")
-                 return
+
+            elif origin.type == "hidden_user":
+                sender_name = (
+                    html.escape(origin.sender_user_name) if origin.sender_user_name else "Unknown"
+                )
+                await msg.reply_text(
+                    f"👤 <b>Скрытый пользователь</b>\n"
+                    f"Имя: {sender_name}\n"
+                    "ID скрыт настройками приватности.",
+                    parse_mode="HTML",
+                )
+                return
 
         # Fallback (if forward_origin is somehow missing but it was a forward)
-        await msg.reply_text("❌ Не удалось определить источник (возможно, скрыт настройками приватности).")
+        await msg.reply_text(
+            "❌ Не удалось определить источник (возможно, скрыт настройками приватности)."
+        )
 
     async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """

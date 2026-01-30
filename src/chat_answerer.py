@@ -7,7 +7,6 @@ from openai import AsyncOpenAI
 
 from src.config_loader import Config
 
-
 SYSTEM_PROMPT = """
 Ты — ассистент, который отвечает на вопросы по истории Telegram-канала.
 
@@ -180,9 +179,9 @@ class ChatAnswerer:
         chunk_start = 1
         chunk_chars = 0
         for i, snippet in enumerate(snippets, 1):
-            if (
-                chunk_parts
-                and (chunk_chars + len(snippet) > MAP_CHUNK_CONTEXT_CHAR_LIMIT or len(chunk_parts) >= MAP_CHUNK_MAX_MESSAGES)
+            if chunk_parts and (
+                chunk_chars + len(snippet) > MAP_CHUNK_CONTEXT_CHAR_LIMIT
+                or len(chunk_parts) >= MAP_CHUNK_MAX_MESSAGES
             ):
                 chunk_specs.append((chunk_start, i - 1, "\n\n".join(chunk_parts)))
                 chunk_parts = []
@@ -199,7 +198,9 @@ class ChatAnswerer:
         map_failures = 0
         map_failures_lock = asyncio.Lock()
 
-        async def select_for_chunk(chunk_index: int, total_chunks: int, chunk_text: str) -> Set[int]:
+        async def select_for_chunk(
+            _chunk_index: int, total_chunks: int, chunk_text: str
+        ) -> Set[int]:
             async with sem:
                 user_prompt = (
                     f"Вопрос: {question}\n\n"

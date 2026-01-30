@@ -106,9 +106,7 @@ class MessageCollector:
                 continue
 
             try:
-                messages = await self._fetch_channel_messages(
-                    channel_config, start_date, end_date
-                )
+                messages = await self._fetch_channel_messages(channel_config, start_date, end_date)
                 all_messages[channel_config.name] = messages
                 self.logger.info(f"✓ {channel_config.name}: {len(messages)} messages")
             except ChannelPrivateError:
@@ -172,10 +170,10 @@ class MessageCollector:
         # For now, let's just use a higher limit if it looks like a history request?
         # Or just respect config. Let's respect config but maybe warn if it's hit.
         max_messages = self.config.settings.max_messages_per_channel
-        
+
         # If we are fetching a specific large period, we might need more messages.
         # But let's stick to config limit for safety for now.
-        
+
         offset_date = end_date if end_date else datetime.utcnow()
 
         try:

@@ -46,7 +46,9 @@ async def test_answer_full_scan_single_pass_includes_all_messages(sample_config,
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_answer_full_scan_map_reduce_selects_relevant_messages(monkeypatch, sample_config, mock_logger):
+async def test_answer_full_scan_map_reduce_selects_relevant_messages(
+    monkeypatch, sample_config, mock_logger
+):
     monkeypatch.setattr(chat_answerer, "SINGLE_PASS_CONTEXT_CHAR_LIMIT", 500)
     monkeypatch.setattr(chat_answerer, "MAP_CHUNK_CONTEXT_CHAR_LIMIT", 100_000)
     monkeypatch.setattr(chat_answerer, "MAP_CHUNK_MAX_MESSAGES", 2)
@@ -97,7 +99,9 @@ async def test_answer_full_scan_map_reduce_selects_relevant_messages(monkeypatch
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_answer_full_scan_map_reduce_no_hits_returns_message(monkeypatch, sample_config, mock_logger):
+async def test_answer_full_scan_map_reduce_no_hits_returns_message(
+    monkeypatch, sample_config, mock_logger
+):
     monkeypatch.setattr(chat_answerer, "SINGLE_PASS_CONTEXT_CHAR_LIMIT", 300)
     monkeypatch.setattr(chat_answerer, "MAP_CHUNK_CONTEXT_CHAR_LIMIT", 100_000)
     monkeypatch.setattr(chat_answerer, "MAP_CHUNK_MAX_MESSAGES", 2)
@@ -134,7 +138,9 @@ async def test_answer_full_scan_map_reduce_no_hits_returns_message(monkeypatch, 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_answer_full_scan_map_reduce_provider_failures_returns_message(monkeypatch, sample_config, mock_logger):
+async def test_answer_full_scan_map_reduce_provider_failures_returns_message(
+    monkeypatch, sample_config, mock_logger
+):
     monkeypatch.setattr(chat_answerer, "SINGLE_PASS_CONTEXT_CHAR_LIMIT", 300)
     monkeypatch.setattr(chat_answerer, "MAP_CHUNK_CONTEXT_CHAR_LIMIT", 100_000)
     monkeypatch.setattr(chat_answerer, "MAP_CHUNK_MAX_MESSAGES", 2)

@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-
 DEFAULT_CHAT_DB_PATH = "data/telebrief.db"
 
 
@@ -29,22 +28,21 @@ class ChatStorage:
     def ensure_schema(self) -> None:
         with self._connection() as conn:
             conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS channels (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     sort_order INTEGER NOT NULL DEFAULT 0
                 )
-                """
-            )
+                """)
             try:
-                conn.execute("ALTER TABLE channels ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE channels ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS chat_sessions (
                     id TEXT PRIMARY KEY,
                     user_id INTEGER NOT NULL,
@@ -55,13 +53,11 @@ class ChatStorage:
                     created_at TEXT NOT NULL,
                     is_active INTEGER NOT NULL DEFAULT 1
                 )
-                """
-            )
+                """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_active ON chat_sessions(user_id, is_active)"
             )
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS chat_corpus_messages (
                     session_id TEXT NOT NULL,
                     message_id INTEGER NOT NULL,
@@ -74,13 +70,11 @@ class ChatStorage:
                     PRIMARY KEY (session_id, message_id),
                     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
                 )
-                """
-            )
+                """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_corpus_session_ts ON chat_corpus_messages(session_id, timestamp)"
             )
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS chat_turns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -89,8 +83,7 @@ class ChatStorage:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
                 )
-                """
-            )
+                """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns(session_id, id)"
             )
@@ -102,13 +95,11 @@ class ChatStorage:
 
     def list_channels(self) -> List[Dict[str, str]]:
         with self._connection() as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT id, name
                 FROM channels
                 ORDER BY sort_order ASC, name COLLATE NOCASE
-                """
-            ).fetchall()
+                """).fetchall()
 
         return [{"id": str(r[0]), "name": str(r[1])} for r in rows]
 

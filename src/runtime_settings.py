@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-
 DEFAULT_RUNTIME_SETTINGS_PATH = "data/runtime_settings.json"
 
 

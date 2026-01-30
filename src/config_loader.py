@@ -117,7 +117,9 @@ def load_config(config_path: str = "config.yaml") -> Config:
     default_openai_model = openai_model_env or settings_dict.get("openai_model", "gpt-5-nano")
     runtime_openai_model = runtime_settings.get("openai_model")
     effective_openai_model = (
-        runtime_openai_model if isinstance(runtime_openai_model, str) and runtime_openai_model.strip() else default_openai_model
+        runtime_openai_model
+        if isinstance(runtime_openai_model, str) and runtime_openai_model.strip()
+        else default_openai_model
     )
 
     settings = Settings(
@@ -146,12 +148,18 @@ def load_config(config_path: str = "config.yaml") -> Config:
         db_path = (
             db_path_env
             if db_path_env
-            else (str(Path(config_path).parent / "telebrief.db") if config_path != "config.yaml" else None)
+            else (
+                str(Path(config_path).parent / "telebrief.db")
+                if config_path != "config.yaml"
+                else None
+            )
         )
         storage = ChatStorage(db_path=db_path)
         storage.ensure_schema()
         storage.upsert_channels([(c.id, c.name) for c in seed_channels])
-        channels = [ChannelConfig(id=row["id"], name=row["name"]) for row in storage.list_channels()]
+        channels = [
+            ChannelConfig(id=row["id"], name=row["name"]) for row in storage.list_channels()
+        ]
     except Exception:
         channels = list(seed_channels)
 
@@ -217,55 +225,52 @@ def load_config(config_path: str = "config.yaml") -> Config:
 def add_channel_to_config_file(config_path: str, channel_id: int, channel_name: str) -> bool:
     """
     Add a channel to the config.yaml file preserving comments.
-    
+
     Args:
         config_path: Path to config.yaml
         channel_id: Channel ID
         channel_name: Channel name
-        
+
     Returns:
         True if successful
     """
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-            
+
         # Find "channels:" section
         channels_idx = -1
         for i, line in enumerate(lines):
             if line.strip().startswith("channels:"):
                 channels_idx = i
                 break
-                
+
         if channels_idx == -1:
             return False
-            
+
         # Find insertion point (end of channels list)
         # We look for the start of the next section (no indentation)
         # or end of file
         insert_idx = len(lines)
-        
+
         for i in range(channels_idx + 1, len(lines)):
             line = lines[i]
             # Check for non-empty, non-comment line with 0 indentation
             if line.strip() and not line.strip().startswith("#") and not line.startswith(" "):
                 insert_idx = i
                 break
-                
+
         # Prepare new entry lines
-        new_entry = [
-            f"  - id: {channel_id}\n",
-            f"    name: \"{channel_name}\"\n"
-        ]
-        
+        new_entry = [f"  - id: {channel_id}\n", f'    name: "{channel_name}"\n']
+
         # Insert
         lines[insert_idx:insert_idx] = new_entry
-        
+
         with open(config_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-            
+
         return True
-        
+
     except Exception as e:
         print(f"Error updating config: {e}")
         return False
@@ -274,39 +279,39 @@ def add_channel_to_config_file(config_path: str, channel_id: int, channel_name: 
 def remove_channel_from_config_file(config_path: str, channel_id: int) -> bool:
     """
     Remove a channel from the config.yaml file.
-    
+
     Args:
         config_path: Path to config.yaml
         channel_id: Channel ID to remove
-        
+
     Returns:
         True if successful
     """
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-            
+
         # Find "channels:" section
         channels_idx = -1
         for i, line in enumerate(lines):
             if line.strip().startswith("channels:"):
                 channels_idx = i
                 break
-                
+
         if channels_idx == -1:
             return False
-            
+
         # Find the channel entry
         start_idx = -1
         end_idx = -1
-        
+
         # Look for "- id: CHANNEL_ID"
         target_str = str(channel_id)
-        
+
         for i in range(channels_idx + 1, len(lines)):
             line = lines[i]
             stripped = line.strip()
-            
+
             # Start of a channel block
             if stripped.startswith("- id:"):
                 # If we found the start of our target channel
@@ -316,28 +321,33 @@ def remove_channel_from_config_file(config_path: str, channel_id: int) -> bool:
                 elif start_idx != -1:
                     end_idx = i
                     break
-            
+
             # If we hit a new top-level section (no indentation) or end of file
-            elif start_idx != -1 and stripped and not line.startswith(" ") and not line.startswith("#"):
+            elif (
+                start_idx != -1
+                and stripped
+                and not line.startswith(" ")
+                and not line.startswith("#")
+            ):
                 end_idx = i
                 break
 
         # If we found start but not end, it means it goes until EOF
         if start_idx != -1 and end_idx == -1:
             end_idx = len(lines)
-            
+
         if start_idx == -1:
             print(f"Channel ID {channel_id} not found in config")
             return False
-            
+
         # Remove lines
         del lines[start_idx:end_idx]
-        
+
         with open(config_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-            
+
         return True
-        
+
     except Exception as e:
         print(f"Error removing from config: {e}")
         return False

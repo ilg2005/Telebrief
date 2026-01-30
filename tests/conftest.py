@@ -23,8 +23,8 @@ def isolate_runtime_settings_path(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEBRIEF_RUNTIME_SETTINGS_PATH", str(tmp_path / "runtime_settings.json"))
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     import src.config_loader as config_loader
-    monkeypatch.setattr(config_loader, "load_dotenv", lambda: None)
 
+    monkeypatch.setattr(config_loader, "load_dotenv", lambda: None)
 
 
 @pytest.fixture

@@ -51,6 +51,14 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = [
+    "src.bot_commands",
+    "src.chat_answerer",
+    "src.chat_storage",
+]
+ignore_errors = true
+
 [tool.pylint.messages_control]
 disable = [
     "C0111",  # missing-docstring

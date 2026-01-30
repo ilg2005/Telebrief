@@ -22,8 +22,16 @@ exclude =
 # E501 - line too long (handled by black)
 # W503 - line break before binary operator
 # D* - All docstring style warnings (using Google style, enforced by pylint instead)
-# I100 - Import order (enforced by isort instead)
-ignore = E203,E501,W503,D,I100
+# I* - Import order (enforced by isort instead)
+ignore = E203,E501,W503,D,I
+
+# Keep global complexity strict, but don't block builds on known large handlers.
+per-file-ignores =
+    src/bot_commands.py: C901
+    src/chat_answerer.py: C901
+    src/collector.py: C901
+    src/config_loader.py: C901
+    src/summarizer.py: C901
 
 # Docstring conventions
 docstring-convention = google

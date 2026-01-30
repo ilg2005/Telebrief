@@ -10,10 +10,10 @@ import asyncio
 import signal
 import sys
 
-from src.config_loader import load_config
-from src.utils import setup_logging
-from src.scheduler import DigestScheduler
 from src.bot_commands import BotCommandHandler
+from src.config_loader import load_config
+from src.scheduler import DigestScheduler
+from src.utils import setup_logging
 
 
 class TelebriefApp:
@@ -58,11 +58,7 @@ class TelebriefApp:
 
             # Initialize bot command handler
             self.logger.info("Initializing bot command handler...")
-            self.bot_handler = BotCommandHandler(
-                self.config,
-                self.logger,
-                self.scheduler
-            )
+            self.bot_handler = BotCommandHandler(self.config, self.logger, self.scheduler)
             self.bot_handler.setup_application()
 
             self.logger.info("✅ Initialization complete")
@@ -83,6 +79,7 @@ class TelebriefApp:
         except Exception as e:
             print(f"❌ Initialization failed: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
