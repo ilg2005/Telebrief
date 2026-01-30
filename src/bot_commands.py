@@ -182,13 +182,15 @@ class BotCommandHandler:
         default_model = self.config.settings.default_openai_model
         is_overridden = current_model != default_model
 
+        current_model_html = html.escape(str(current_model))
+        default_model_html = html.escape(str(default_model))
         lines = [
-            "🤖 **Модель генерации**",
-            f"Текущая: `{current_model}`",
-            f"По умолчанию: `{default_model}`",
+            "<b>🤖 Модель генерации</b>",
+            f"Текущая: <code>{current_model_html}</code>",
+            f"По умолчанию: <code>{default_model_html}</code>",
             "",
-            "Сменить модель: /model <id>",
-            "Пример: /model anthropic/claude-3.5-sonnet",
+            "Сменить модель: <code>/model &lt;id&gt;</code>",
+            "Пример: <code>/model anthropic/claude-3.5-sonnet</code>",
         ]
 
         reply_markup: Optional[InlineKeyboardMarkup] = None
@@ -205,15 +207,17 @@ class BotCommandHandler:
 
         current_model = self.config.settings.openai_model
         default_model = self.config.settings.default_openai_model
+        current_model_html = html.escape(str(current_model))
+        default_model_html = html.escape(str(default_model))
         model_line = (
-            f"🤖 Модель: {current_model}"
+            f"🤖 Модель: <code>{current_model_html}</code>"
             if current_model == default_model
-            else f"🤖 Модель: {current_model} (дефолт: {default_model})"
+            else f"🤖 Модель: <code>{current_model_html}</code> (дефолт: <code>{default_model_html}</code>)"
         )
 
         status_lines = [
-            "📊 **Статус Telebrief**\n",
-            f"🧩 Сборка: {self.build_id}",
+            "<b>📊 Статус Telebrief</b>\n",
+            f"🧩 Сборка: {html.escape(str(self.build_id))}",
             model_line,
             f"📺 Каналов настроено: {len(self.config.channels)}",
             f"🧹 Автоочистка: {'Включена' if self.config.settings.auto_cleanup_old_digests else 'Выключена'}",
@@ -227,18 +231,20 @@ class BotCommandHandler:
         status_lines.extend(
             [
                 "",
-                "**Доступные команды:**",
-                "/digest - Сгенерировать дайджест сейчас",
-                "/history - Анализ истории (меню выбора)",
-                "/remove - Удалить канал из списка (меню выбора)",
-                "/cleanup - Удалить предыдущие дайджесты",
-                "/autoschedule on|off - Автодайджест",
-                "/status - Показать этот статус",
-                "/help - Помощь",
+                "<b>Доступные команды:</b>",
+                "• /digest - Сгенерировать дайджест сейчас",
+                "• /history - Анализ истории (меню выбора)",
+                "• /chat - Чат по выбранной истории канала",
+                "• /remove - Удалить канал из списка (меню выбора)",
+                "• /cleanup - Удалить предыдущие дайджесты",
+                "• /autoschedule on|off - Автодайджест",
+                "• /status - Показать этот статус",
+                "• /version - Версия/сборка",
+                "• /help - Помощь",
                 "",
-                "💡 **Совет:**",
-                "- Чтобы добавить канал, просто перешлите мне из него любое сообщение.",
-                "- Чтобы удалить канал, используйте команду /remove.",
+                "<b>💡 Совет:</b>",
+                "• Чтобы добавить канал, просто перешлите мне из него любое сообщение.",
+                "• Чтобы удалить канал, используйте команду /remove.",
             ]
         )
 
@@ -644,13 +650,13 @@ class BotCommandHandler:
             if target == "status":
                 text, reply_markup = self._build_status_message()
                 await query.edit_message_text(
-                    text=text, parse_mode="Markdown", reply_markup=reply_markup
+                    text=text, parse_mode="HTML", reply_markup=reply_markup
                 )
                 return
 
             text, reply_markup = self._build_model_message()
             await query.edit_message_text(
-                text=text, parse_mode="Markdown", reply_markup=reply_markup
+                text=text, parse_mode="HTML", reply_markup=reply_markup
             )
             return
 
@@ -662,7 +668,7 @@ class BotCommandHandler:
                 self._set_scheduler_enabled(False)
 
             text, reply_markup = self._build_status_message()
-            await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
+            await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=reply_markup)
             return
 
         if data.startswith("history_period:"):
@@ -781,9 +787,12 @@ class BotCommandHandler:
                     await query.edit_message_reply_markup(reply_markup=None)
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"✅ Канал **\"{channel_name}\"** успешно добавлен в настройки!\n"
-                             f"Он появится в дайджестах со следующего запуска.",
-                        parse_mode="Markdown"
+                        text=(
+                            f'✅ Канал <b>"{html.escape(channel_name)}"</b> успешно добавлен в настройки!\n'
+                            "Он появится в дайджестах со следующего запуска."
+                        ),
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
                     )
                 else:
                     await query.edit_message_text("❌ Ошибка при записи в файл конфигурации.")
@@ -809,9 +818,9 @@ class BotCommandHandler:
                     ]
                 ]
                 await query.edit_message_text(
-                    f"⚠️ Вы уверены, что хотите удалить канал **{channel_name}**?",
+                    f"⚠️ Вы уверены, что хотите удалить канал <b>{html.escape(channel_name)}</b>?",
                     reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
                 return
             except Exception:
@@ -863,9 +872,9 @@ class BotCommandHandler:
                     break
 
             await query.edit_message_text(
-                f"⏳ Собираю историю для чата: **{channel_name}** ({period_display})...\n"
+                f"⏳ Собираю историю для чата: <b>{html.escape(channel_name)}</b> ({html.escape(period_display)})...\n"
                 "Это может занять время.",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
 
             user_id = update.effective_user.id
@@ -941,9 +950,9 @@ class BotCommandHandler:
                 break
 
         await query.edit_message_text(
-            f"⏳ Анализирую историю канала **{channel_name}** ({period_display})...\n"
+            f"⏳ Анализирую историю канала <b>{html.escape(channel_name)}</b> ({html.escape(period_display)})...\n"
             "Это может занять время.",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
         user_id = update.effective_user.id
@@ -1265,9 +1274,9 @@ class BotCommandHandler:
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "🗑️ **Удаление канала**\nВыберите канал, который хотите удалить:",
+            "🗑️ <b>Удаление канала</b>\nВыберите канал, который хотите удалить:",
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
     async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1290,7 +1299,7 @@ class BotCommandHandler:
             return
 
         text, reply_markup = self._build_status_message()
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
 
     async def handle_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         assert update.effective_user is not None
@@ -1347,17 +1356,20 @@ class BotCommandHandler:
         args = context.args
         if not args:
             text, reply_markup = self._build_model_message()
-            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
             return
 
         model_id = " ".join(args).strip()
         if not model_id:
             text, reply_markup = self._build_model_message()
-            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
             return
 
         self._set_openai_model(model_id)
-        await update.message.reply_text(f"✅ Ок, использую модель: `{model_id}`", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ Ок, использую модель: <code>{html.escape(model_id)}</code>",
+            parse_mode="HTML",
+        )
 
     async def handle_id_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -1481,45 +1493,43 @@ class BotCommandHandler:
             else "Автодайджест сейчас выключен. Включить: /autoschedule on (или кнопкой в /status)"
         )
 
-        help_text = """
-🤖 **Telebrief - Telegram Digest Generator**
-
-Я автоматически генерирую ежедневные дайджесты из ваших Telegram-каналов с помощью AI.
-
-**Команды:**
-
-/digest - Сгенерировать дайджест за последние 24 часа
-/history - Анализ истории канала (меню выбора)
-/chat - Чат по выбранной истории канала
-/chat_status - Показать текущий чат-контекст
-/chat_reset - Пересобрать чат-контекст
-/chat_stop - Выйти из режима чата
-/remove - Удалить канал из списка (меню выбора)
-/cleanup - Удалить предыдущие дайджесты вручную
-/autoschedule - Включить/выключить автодайджест
-/model - Показать/изменить модель генерации
-/status - Показать статус и настройки
-/help - Показать эту справку
-
-**📢 Управление каналами:**
-• **Добавить:** Перешлите мне любое сообщение из канала. Я предложу добавить его в мониторинг.
-• **Удалить:** Используйте команду /remove для выбора и удаления канала.
-
-**Автоматический режим:**
-{}
-
-**Возможности:**
-• Обработка каналов на любых языках
-• Вывод всегда на русском языке
-• Умные суммаризации с помощью настроенной модели нейросети
-• Анализ истории и трендов канала
-• Ссылки на оригинальные сообщения
-• Автоматическая очистка старых дайджестов (настраивается)
-        """.format(
-            auto_line
+        auto_line_html = html.escape(auto_line)
+        help_text_html = (
+            "<b>🤖 Telebrief - Telegram Digest Generator</b>\n\n"
+            "Я автоматически генерирую ежедневные дайджесты из ваших Telegram-каналов с помощью AI.\n\n"
+            "<b>Команды:</b>\n\n"
+            "/digest - Сгенерировать дайджест за последние 24 часа\n"
+            "/history - Анализ истории канала (меню выбора)\n"
+            "/chat - Чат по выбранной истории канала\n"
+            "/chat_status - Показать текущий чат-контекст\n"
+            "/chat_reset - Пересобрать чат-контекст\n"
+            "/chat_stop - Выйти из режима чата\n"
+            "/remove - Удалить канал из списка (меню выбора)\n"
+            "/cleanup - Удалить предыдущие дайджесты вручную\n"
+            "/autoschedule - Включить/выключить автодайджест\n"
+            "/model - Показать/изменить модель генерации\n"
+            "/status - Показать статус и настройки\n"
+            "/version - Показать версию/сборку\n"
+            "/help - Показать эту справку\n\n"
+            "<b>📢 Управление каналами:</b>\n"
+            "• <b>Добавить:</b> Перешлите мне любое сообщение из канала. Я предложу добавить его в мониторинг.\n"
+            "• <b>Удалить:</b> Используйте команду /remove для выбора и удаления канала.\n\n"
+            "<b>Автоматический режим:</b>\n"
+            f"{auto_line_html}\n\n"
+            "<b>Возможности:</b>\n"
+            "• Обработка каналов на любых языках\n"
+            "• Вывод всегда на русском языке\n"
+            "• Умные суммаризации с помощью настроенной модели нейросети\n"
+            "• Анализ истории и трендов канала\n"
+            "• Ссылки на оригинальные сообщения\n"
+            "• Автоматическая очистка старых дайджестов (настраивается)"
         )
 
-        await update.message.reply_text(help_text, parse_mode="Markdown")
+        await update.message.reply_text(
+            help_text_html,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
     async def run(self):
         """Run the bot (polling mode)."""
