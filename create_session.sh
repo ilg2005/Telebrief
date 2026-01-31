@@ -76,56 +76,7 @@ docker run --rm -it \
     -v "$(pwd)/sessions:/app/sessions" \
     -v "$(pwd)/.env:/app/.env:ro" \
     telebrief:latest \
-    python -c "
-import asyncio
-import os
-import sys
-from telethon import TelegramClient
-
-async def create_session():
-    api_id = os.getenv('TELEGRAM_API_ID')
-    api_hash = os.getenv('TELEGRAM_API_HASH')
-
-    if not api_id or not api_hash:
-        print('❌ ERROR: Missing TELEGRAM_API_ID or TELEGRAM_API_HASH in .env file')
-        sys.exit(1)
-
-    client = TelegramClient('sessions/user', int(api_id), api_hash)
-
-    try:
-        await client.start()
-
-        print()
-        print('=' * 70)
-        print('✅ SUCCESS! Session created successfully')
-        print('=' * 70)
-        print()
-
-        me = await client.get_me()
-        print(f'Authenticated as: {me.first_name}')
-        if me.username:
-            print(f'Username: @{me.username}')
-        print(f'Phone: {me.phone}')
-        print()
-        print('Session file: sessions/user.session')
-        print()
-        print('Next steps:')
-        print('  1. Run: docker compose up -d')
-        print('  2. Check logs: docker compose logs -f telebrief')
-        print()
-
-    except KeyboardInterrupt:
-        print()
-        print('⚠️  Session creation cancelled')
-        sys.exit(1)
-    except Exception as e:
-        print(f'❌ Error: {e}')
-        sys.exit(1)
-    finally:
-        await client.disconnect()
-
-asyncio.run(create_session())
-"
+    python create_session.py
 
 RESULT=$?
 

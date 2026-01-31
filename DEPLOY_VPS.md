@@ -23,11 +23,33 @@
 
 ## Шаг 1: Загрузка проекта
 
-Склонируйте репозиторий на ваш сервер:
+Выберите один из способов загрузки кода на ваш VPS. Мы будем клонировать ветку `openrouter_integration`, как наиболее актуальную.
+
+### Вариант 1: Через HTTPS (Git)
+Самый простой способ, не требующий настройки ключей (для публичных репозиториев).
 
 ```bash
-git clone https://github.com/your-username/telebrief.git
-cd telebrief
+# Клонируем конкретную ветку openrouter_integration
+git clone -b openrouter_integration https://github.com/ilg2005/Telebrief.git
+
+# Переходим в папку проекта
+cd Telebrief
+```
+
+### Вариант 2: Через SSH
+Используйте этот метод, если вы добавили свой SSH-ключ в GitHub. Это удобнее для обновлений и работы с приватными репозиториями.
+
+```bash
+git clone -b openrouter_integration git@github.com:ilg2005/Telebrief.git
+cd Telebrief
+```
+
+### Вариант 3: Через GitHub CLI (gh)
+Если у вас установлена утилита `gh` и вы авторизованы (`gh auth login`):
+
+```bash
+gh repo clone ilg2005/Telebrief -- -b openrouter_integration
+cd Telebrief
 ```
 
 > **Примечание:** Если у вас приватный репозиторий, вам потребуется настроить SSH ключи или использовать HTTPS с токеном.
@@ -56,7 +78,20 @@ nano .env
 - `OPENAI_API_KEY`: Ваш ключ API (OpenAI или OpenRouter).
 - `OPENAI_BASE_URL`: Если используете OpenRouter или другой прокси (иначе оставьте по умолчанию).
 
-### 2.2. Настройка параметров бота (config.yaml)
+### 2.2. Создание Telegram сессии (ОБЯЗАТЕЛЬНО)
+
+Перед запуском необходимо авторизоваться в Telegram, чтобы создать файл сессии.
+
+```bash
+# Запустите скрипт создания сессии
+chmod +x create_session.sh
+./create_session.sh
+```
+
+Следуйте инструкциям на экране: введите номер телефона и код подтверждения.
+Это создаст файл `sessions/user.session`, который будет использоваться ботом.
+
+### 2.3. Настройка параметров бота (config.yaml)
 
 Скопируйте пример конфига:
 
